@@ -95,10 +95,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Training model")
     parser.add_argument('--train_data', default="../data/all_wiki_sentence_split_words_using_compound_dict.pkl")
     parser.add_argument('--output', default="../model/model.h5")
-    parser.add_argument('--epochs', default=10)
-    parser.add_argument('--batch_size', default=32)
-    parser.add_argument('--word_emb_size', default=100)
-    parser.add_argument('--lstm_unit_size', default=100)
+    parser.add_argument('--epochs', default=10, type=int)
+    parser.add_argument('--batch_size', default=32, type=int)
+    parser.add_argument('--word_emb_size', default=100, type=int)
+    parser.add_argument('--lstm_unit_size', default=100, type=int)
 
     args = parser.parse_args()
 
