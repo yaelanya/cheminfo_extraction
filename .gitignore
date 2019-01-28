@@ -1,4 +1,8 @@
-data/
-mode/
-runs/
-\.gitignore
+/data/
+/model/
+/runs/
+/src/runs/
+*/__pycache__/
+*/.ipynb_checkpoints/
+*.ipynb
+

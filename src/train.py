@@ -3,17 +3,17 @@ import numpy as np
 import pandas as pd
 import math
 import torch
-from tqdm import tqdm
 import tensorboardX as tbx
 from tensorflow.keras.preprocessing.sequence import pad_sequences
+from time import time
 
 from models import BiLM
 from losses import SoftmaxLoss
 import utils
 
-def main(args):
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+def main(args):
     tokenizer, sentences_idx = sentence_preprocessing(args.train_data)
     bi_lm_model = BiLM(args.word_emb_size, args.lstm_unit_size, len(tokenizer.vocab_word))
     
@@ -39,17 +39,19 @@ def train(model, data, epochs, batch_size):
     optimizer = torch.optim.Adam(model.parameters())
     for epoch in range(epochs):
         epoch_loss = 0.0
-        for i, minibatch, target in tqdm(batch_generator(data, batch_size)):
+        start = time()
+        for i, minibatch, target in batch_generator(data, batch_size):
             optimizer.zero_grad()
             forward_output, backword_output, c = model(minibatch)
             loss = loss_func(forward_output, backword_output, target)
             loss.backward()
             optimizer.step()
-            epoch_loss += loss.data
+            epoch_loss += loss.item()
         
+        end = time()
         epoch_loss /= num_batches
         writer.add_scalar('epoch_loss', epoch_loss, global_step=epoch)
-        print("Epoch", (i + 1), ":", epoch_loss)
+        print("Epoch", (epoch + 1), ":", epoch_loss, "Exec time:", end - start, "s")
         
     writer.close()
 
@@ -88,8 +90,11 @@ def batch_generator(data, batch_size):
         
         batch_data = torch.tensor(batch_data).long()
         batch_X = batch_data.transpose(1, 0).view(-1, batch_data.shape[0])
-        
-        yield (batch_num + 1), batch_X, batch_data
+       
+        if device != "cpu":
+            yield (batch_num + 1), batch_X.cuda(), batch_data.cuda()
+        else:
+            yield (batch_num + 1), batch_X, batch_data
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Training model")

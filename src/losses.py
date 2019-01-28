@@ -13,8 +13,8 @@ class SoftmaxLoss(torch.nn.Module):
         targets = targets[targets > 2]
         num_targets = torch.sum(targets > 2)
 
-        forward_loss = torch.nn.functional.nll_loss(forward_output, targets)
-        backward_loss = torch.nn.functional.nll_loss(backward_output, targets)
+        forward_loss = torch.nn.functional.nll_loss(forward_output, targets, reduction='sum')
+        backward_loss = torch.nn.functional.nll_loss(backward_output, targets, reduction='sum')
 
         average_loss = 0.5 * (forward_loss + backward_loss) / num_targets
 
