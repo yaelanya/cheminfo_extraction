@@ -12,13 +12,18 @@ class BiLM(nn.Module):
         self.bi_lstm = nn.LSTM(embedding_dim, lstm_units, num_layers=1, bidirectional=True)
         self.linear = nn.Linear(lstm_units, vocab_size)
 
-    def forward(self, x):
-        emb = self.embedding(x)
-        output, (h, c) = self.bi_lstm(emb)
+    def forward(self, inputs):
+        """
+        Args:
+            inputs: (batch_size, seq_len)
+        """
+        inputs = inputs.transpose(0, 1) # (seq_len, batch_size)
+        embs = self.embedding(inputs)
+        output, (h, c) = self.bi_lstm(embs)
         forward_output, backword_output = output[:, :, :self.lstm_units], output[:, :, self.lstm_units:]
         
         # shape: (batch_size * timesteps, lstm_units)
-        forward_mask, backward_mask = self._get_mask(x)
+        forward_mask, backward_mask = self._get_mask(inputs)
         forward_output = forward_output[forward_mask]
         backword_output = backword_output[backward_mask]
         
@@ -240,13 +245,20 @@ class Att_BiLSTM_CRF(nn.Module):
         return max_score + \
             torch.log(torch.sum(torch.exp(vec - max_score_broadcast)))
 
-    def neg_log_likelihood(self, inputs, sent_embs, targets):
+    def neg_log_likelihood(self, inputs, sent_embs, targets, ignore_index=None):
         """
         Args:
             inputs: (batch_size, seq_len)
             targets: (batch_size, seq_len)
+            ignore_index: int
         """
         feats = self._get_lstm_features(inputs, sent_embs)
-        losses = [self._forward_alg(x) - self._score_sentence(x, tags) for x, tags in zip(feats, targets)]
+        if ignore_index:
+            losses = [
+                    self._forward_alg(x[tags != ignore_index]) - self._score_sentence(x[tags != ignore_index], tags[tags != ignore_index]) 
+                    for x, tags in zip(feats, targets)
+                ]
+        else:
+            losses = [self._forward_alg(x) - self._score_sentence(x, tags) for x, tags in zip(feats, targets)]
         
         return sum(losses) / len(losses)
