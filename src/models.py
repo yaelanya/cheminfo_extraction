@@ -249,4 +249,4 @@ class Att_BiLSTM_CRF(nn.Module):
         feats = self._get_lstm_features(inputs, sent_embs)
         losses = [self._forward_alg(x) - self._score_sentence(x, tags) for x, tags in zip(feats, targets)]
         
-        return sum(losses)
+        return sum(losses) / len(losses)
