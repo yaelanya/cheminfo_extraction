@@ -12,8 +12,6 @@ from losses import SoftmaxLoss
 import utils
 
 
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
 class BatchGenerator(object):
     def __init__(self):
         self.section_embs_dict = {}
@@ -38,7 +36,7 @@ class BatchGenerator(object):
             sentemb_inputs = self.pad_sentembs([self.section_embs_dict[_hash] for _hash in batch_sentembs_hash])
             outputs = torch.tensor(pad_sequences(batch_tag_seq, padding='post')).long()
 
-            if DEVICE != 'cpu':
+            if DEVICE == "cuda:0":
                 sentence_inputs = sentence_inputs.cuda()
                 sentemb_inputs = sentemb_inputs.cuda()
                 outputs = outputs.cuda()
@@ -58,14 +56,15 @@ class BatchGenerator(object):
 
 def main(args):
     train_df = pd.read_pickle(args.train_data)
+    train_df.fillna('NO_SUBTITLE', inplace=True)
     tokenizer = get_tokenizer(args.transfer, train_df.repl_words.tolist())
 
     model = Att_BiLSTM_CRF(vocab_size=len(tokenizer.vocab_word)
                            , tag_to_ix=tokenizer.vocab_tag
-                           , embedding_dim=args.embedding_dim
+                           , embedding_dim=args.word_emb_size
                            , lstm1_units=args.lstm1_units
                            , lstm2_units=args.lstm2_units)
-    if args.is_transfer:
+    if args.transfer:
         bilm_model = BiLM(embedding_dim=args.bilm_emb_size
                           , lstm_units=args.bilm_lstm_units
                           , vocab_size=len(tokenizer.vocab_word))
@@ -156,6 +155,8 @@ def transfer_weight(model, src_model, src_model_path):
     return model
 
 if __name__ == "__main__":
+    DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
     parser = argparse.ArgumentParser(description="Training model")
     parser.add_argument('--train_data', type=str)
     parser.add_argument('--output', type=str)
@@ -163,8 +164,8 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--word_emb_size', default=100, type=int)
-    parser.add_argument('--lstm1_unit_size', default=100, type=int)
-    parser.add_argument('--lstm2_unit_size', default=200, type=int)
+    parser.add_argument('--lstm1_units', default=100, type=int)
+    parser.add_argument('--lstm2_units', default=200, type=int)
     parser.add_argument('--transfer', default=True, type=bool)
     parser.add_argument('--bilm_emb_size', default=100, type=int)
     parser.add_argument('--bilm_lstm_units', default=100, type=int)
