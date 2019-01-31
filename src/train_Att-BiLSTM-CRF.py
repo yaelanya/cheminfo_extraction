@@ -113,7 +113,10 @@ def train(model, data, epochs, batch_size, batch_generator):
         for sentence_inputs, sentemb_inputs, tags in \
                 batch_generator.generator(sentences, sentembs_hash, tag_seq, batch_size):
             model.zero_grad()
-            loss = model.neg_log_likelihood(sentence_inputs, sentemb_inputs, tags, ignore_index=0)
+            if isinstance(model, torch.nn.DataParallel):
+                loss = model.module.neg_log_likelihood(sentence_inputs, sentemb_inputs, tags, ignore_index=0)
+            else:
+                loss = model.neg_log_likelihood(sentence_inputs, sentemb_inputs, tags, ignore_index=0)
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
