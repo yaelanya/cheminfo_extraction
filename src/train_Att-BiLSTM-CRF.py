@@ -58,7 +58,7 @@ class BatchGenerator(object):
 
 def main(args):
     train_df = pd.read_pickle(args.train_data)
-    tokenizer = get_tokenizer(args.is_transfer, train_df.repl_words.tolist())
+    tokenizer = get_tokenizer(args.transfer, train_df.repl_words.tolist())
 
     model = Att_BiLSTM_CRF(vocab_size=len(tokenizer.vocab_word)
                            , tag_to_ix=tokenizer.vocab_tag
