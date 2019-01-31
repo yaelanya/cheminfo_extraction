@@ -36,7 +36,7 @@ class BatchGenerator(object):
             sentemb_inputs = self.pad_sentembs([self.section_embs_dict[_hash] for _hash in batch_sentembs_hash])
             outputs = torch.tensor(pad_sequences(batch_tag_seq, padding='post')).long()
 
-            if DEVICE == "cuda:0":
+            if DEVICE.type != "cpu":
                 sentence_inputs = sentence_inputs.cuda()
                 sentemb_inputs = sentemb_inputs.cuda()
                 outputs = outputs.cuda()
@@ -73,7 +73,7 @@ def main(args):
     # choice CPU / GPU mode
     if torch.cuda.device_count() > 1:
         print("Use", torch.cuda.device_count(), "GPUs.")
-        model = torch.nn.DataParallel(model)
+        #model = torch.nn.DataParallel(model)
     elif torch.cuda.device_count() == 1:
         print("Use single GPU.")
     else:
@@ -101,7 +101,7 @@ def main(args):
     torch.save(model.state_dict(), args.output)
 
 def train(model, data, epochs, batch_size, batch_generator):
-    writer = tbx.SummaryWriter(log_dir="../runs/Att-BiLSTM-CRF/")
+    writer = tbx.SummaryWriter()
 
     sentences, sentembs_hash, tag_seq = data
     num_batches = np.ceil(len(sentences) / batch_size).astype(np.int)
@@ -119,6 +119,7 @@ def train(model, data, epochs, batch_size, batch_generator):
                 loss = model.neg_log_likelihood(sentence_inputs, sentemb_inputs, tags, ignore_index=0)
             loss.backward()
             optimizer.step()
+            print(loss.item())
             epoch_loss += loss.item()
 
         end = time()

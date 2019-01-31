@@ -153,7 +153,7 @@ class Att_BiLSTM_CRF(nn.Module):
 
     def _forward_alg(self, feats):
         # Do the forward algorithm to compute the partition function
-        init_alphas = torch.full((1, self.tagset_size), -10000.)
+        init_alphas = torch.full((1, self.tagset_size), -10000.).cuda()
         # START_TAG has all of the score.
         init_alphas[0][self.tag_to_ix[self.START_TAG]] = 0.
 
@@ -183,8 +183,8 @@ class Att_BiLSTM_CRF(nn.Module):
 
     def _score_sentence(self, feats, tags):
         # Gives the score of a provided tag sequence
-        score = torch.zeros(1)
-        tags = torch.cat([torch.tensor([self.tag_to_ix[self.START_TAG]], dtype=torch.long), tags])
+        score = torch.zeros(1).cuda()
+        tags = torch.cat([torch.tensor([self.tag_to_ix[self.START_TAG]], dtype=torch.long).cuda(), tags])
         for i, feat in enumerate(feats):
             score = score + \
                 self.transitions[tags[i + 1], tags[i]] + feat[tags[i + 1]]
