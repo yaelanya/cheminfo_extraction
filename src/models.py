@@ -61,6 +61,7 @@ class Attention(nn.Module):
         num_sentence = sentence_embs.size(1)
 
         # Calculate h_1,t*W_a
+        word_embs = word_embs.contiguous()
         word_embs = word_embs.view(-1, embedding_dim)
         word_embs = self.W(word_embs)
         word_embs = word_embs.view(batch_size, seq_len, embedding_dim)
@@ -137,7 +138,8 @@ class Att_BiLSTM_CRF(nn.Module):
         embeds = self.word_embeds(inputs) # (batch_size, seq_len, embedding_dim)
         embeds = embeds.transpose(0, 1) # (seq_len, batch_size, embedding_dim)
         lstm1_out, _ = self.lstm_1(embeds) # (seq_len, batch_size, 2*lstm1_units)
-        if sent_embs:
+        lstm1_out = lstm1_out.transpose(0, 1)
+        if sent_embs is not None:
             attention_out, _ = self.att(lstm1_out, sent_embs) # (seq_len, batch_size, 2*2*lstm1_units)
         else:
             attention_out, _ = self.att(lstm1_out, lstm1_out)
@@ -245,7 +247,7 @@ class Att_BiLSTM_CRF(nn.Module):
         return max_score + \
             torch.log(torch.sum(torch.exp(vec - max_score_broadcast)))
 
-    def neg_log_likelihood(self, inputs, sent_embs, targets, ignore_index=None):
+    def neg_log_likelihood(self, inputs, sent_embs, targets, ignore_index=0):
         """
         Args:
             inputs: (batch_size, seq_len)
@@ -255,7 +257,7 @@ class Att_BiLSTM_CRF(nn.Module):
         feats = self._get_lstm_features(inputs, sent_embs)
         if ignore_index:
             losses = [
-                    self._forward_alg(x[tags != ignore_index]) - self._score_sentence(x[tags != ignore_index], tags[tags != ignore_index]) 
+                    self._forward_alg(x[tags != ignore_index]) - self._score_sentence(x[tags != ignore_index], tags[tags != ignore_index])
                     for x, tags in zip(feats, targets)
                 ]
         else:
