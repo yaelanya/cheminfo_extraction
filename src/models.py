@@ -148,48 +148,54 @@ class Att_BiLSTM_CRF(nn.Module):
         lstm2_out = lstm2_out.view(-1, 2*self.lstm2_units) # (seq_len*batch_size, 2*lstm2_units)
         lstm_feats = self.hidden2tag(lstm2_out) # (seq_len*batch_size, tagset_size)
 
-        return lstm_feats.view(-1, batch_size, self.tagset_size).transpose(0, 1)
-
+        return lstm_feats.view(-1, batch_size, self.tagset_size).transpose(1, 0)
 
     def _forward_alg(self, feats):
-        # Do the forward algorithm to compute the partition function
-        init_alphas = torch.full((1, self.tagset_size), -10000.).cuda()
-        # START_TAG has all of the score.
-        init_alphas[0][self.tag_to_ix[self.START_TAG]] = 0.
+        batch_size = feats.size(0)
 
-        # Wrap in a variable so that we will get automatic backprop
-        forward_var = init_alphas
+        alpha = torch.full((batch_size, self.tagset_size), -10000.)
+        alpha[:, self.tag_to_ix[self.START_TAG]] = 0.
 
-        # Iterate through the sentence
+        feats = feats.transpose(1, 0) # (seq_len, batch_size, tag_size)
         for feat in feats:
-            alphas_t = []  # The forward tensors at this timestep
-            for next_tag in range(self.tagset_size):
-                # broadcast the emission score: it is the same regardless of
-                # the previous tag
-                emit_score = feat[next_tag].view(1, -1).expand(1, self.tagset_size)
-                # the ith entry of trans_score is the score of transitioning to
-                # next_tag from i
-                trans_score = self.transitions[next_tag].view(1, -1)
-                # The ith entry of next_tag_var is the value for the
-                # edge (i -> next_tag) before we do log-sum-exp
-                next_tag_var = forward_var + trans_score + emit_score
-                # The forward variable for this tag is log-sum-exp of all the
-                # scores.
-                alphas_t.append(self._log_sum_exp(next_tag_var).view(1))
-            forward_var = torch.cat(alphas_t).view(1, -1)
-        terminal_var = forward_var + self.transitions[self.tag_to_ix[self.STOP_TAG]]
-        alpha = self._log_sum_exp(terminal_var)
-        return alpha
+            emit_score = feat.unsqueeze(-1).expand(batch_size, *self.transitions.size())
+            alpha_t = alpha.unsqueeze(1).expand(batch_size, *self.transitions.size())
+            trains_t = self.transitions.expand(batch_size, *self.transitions.size())
+            next_tag_var = alpha_t + trains_t + emit_score
+            alpha = self._log_sum_exp(next_tag_var, dim=-1)
+
+        terminal_var = alpha + self.transitions[self.tag_to_ix[self.STOP_TAG]].expand(*alpha.size())
+
+        return self._log_sum_exp(terminal_var, dim=-1)
 
     def _score_sentence(self, feats, tags):
-        # Gives the score of a provided tag sequence
-        score = torch.zeros(1).cuda()
-        tags = torch.cat([torch.tensor([self.tag_to_ix[self.START_TAG]], dtype=torch.long).cuda(), tags])
-        for i, feat in enumerate(feats):
-            score = score + \
-                self.transitions[tags[i + 1], tags[i]] + feat[tags[i + 1]]
-        score = score + self.transitions[self.tag_to_ix[self.STOP_TAG], tags[-1]]
-        return score
+        transition_score = self._transition_score(feats, tags)
+        lstm_score = self._lstm_score(feats, tags)
+        return transition_score + lstm_score
+
+    def _transition_score(self, feats, tags):
+        batch_size = feats.size(0)
+    
+        start_tag = torch.full((batch_size, 1), self.tag_to_ix[self.START_TAG], dtype=torch.long)
+        stop_tag = torch.full((batch_size, 1), self.tag_to_ix[self.STOP_TAG], dtype=torch.long)
+        tags = torch.cat((start_tag, tags), dim=-1)
+        tags = torch.cat((tags, stop_tag), dim=-1)
+        
+        next_tags = tags[:, 1:]
+        next_tags = next_tags.unsqueeze(-1).expand(*next_tags.size(), self.transitions.size(0))
+        trans_t = self.transitions.expand(batch_size, *self.transitions.size())
+        trans_row = torch.gather(trans_t, 1, next_tags)
+        
+        prev_tags = tags[:, :-1]
+        prev_tags = prev_tags.unsqueeze(-1)
+        score = torch.gather(trans_row, 2, prev_tags)
+        
+        return score.squeeze(-1).sum(-1)
+    
+    def _lstm_score(self, feats, tags):
+        tags = tags.unsqueeze(-1)
+        score = torch.gather(feats, 2, tags)
+        return score.squeeze(-1).sum(-1)
 
     def _viterbi_decode(self, feats):
         backpointers = []
@@ -235,17 +241,10 @@ class Att_BiLSTM_CRF(nn.Module):
         best_path.reverse()
         return path_score, best_path
 
-    def _argmax(self, vec):
-    # return the argmax as a python int
-        _, idx = torch.max(vec, 1)
-        return idx.item()
-
-    # Compute log sum exp in a numerically stable way for the forward algorithm
-    def _log_sum_exp(self, vec):
-        max_score = vec[0, self._argmax(vec)]
-        max_score_broadcast = max_score.view(1, -1).expand(1, vec.size()[1])
-        return max_score + \
-            torch.log(torch.sum(torch.exp(vec - max_score_broadcast)))
+    def _log_sum_exp(self, vec, dim=0):
+        _max, _ = torch.max(vec, dim)
+        max_exp = _max.unsqueeze(-1).expand_as(vec)
+        return _max + torch.log(torch.sum(torch.exp(vec - max_exp), dim))
 
     def neg_log_likelihood(self, inputs, sent_embs, targets, ignore_index=0):
         """
@@ -255,12 +254,6 @@ class Att_BiLSTM_CRF(nn.Module):
             ignore_index: int
         """
         feats = self._get_lstm_features(inputs, sent_embs)
-        if ignore_index:
-            losses = [
-                    self._forward_alg(x[tags != ignore_index]) - self._score_sentence(x[tags != ignore_index], tags[tags != ignore_index])
-                    for x, tags in zip(feats, targets)
-                ]
-        else:
-            losses = [self._forward_alg(x) - self._score_sentence(x, tags) for x, tags in zip(feats, targets)]
-        
-        return sum(losses) / len(losses)
+        losses = self._score_sentence(feats, targets) - self._forward_alg(feats)
+
+        return -losses.mean()
