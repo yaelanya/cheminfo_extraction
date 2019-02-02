@@ -91,6 +91,8 @@ class Att_BiLSTM_CRF(nn.Module):
     def __init__(self, vocab_size, tag_to_ix, embedding_dim, lstm1_units, lstm2_units):
         super(Att_BiLSTM_CRF, self).__init__()
 
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
         self.PAD_TAG = "<PAD>"
         self.START_TAG = "<START>"
         self.STOP_TAG = "<STOP>"
@@ -130,7 +132,7 @@ class Att_BiLSTM_CRF(nn.Module):
             _, tag_seq = self._viterbi_decode(feats)
             tag_seq_batch.append(tag_seq)
 
-        return torch.tensor(tag_seq_batch)  # (batch_size, seq_len)
+        return torch.tensor(tag_seq_batch).to(self.device.type)  # (batch_size, seq_len)
 
     def _get_lstm_features(self, inputs, sent_embs):
         batch_size = inputs.size(0)
@@ -153,7 +155,7 @@ class Att_BiLSTM_CRF(nn.Module):
     def _forward_alg(self, feats, tags):
         batch_size = feats.size(0)
 
-        alpha = torch.full((batch_size, self.tagset_size), -10000.)
+        alpha = torch.full((batch_size, self.tagset_size), -10000.).to(self.device.type)
         alpha[:, self.tag_to_ix[self.START_TAG]] = 0.
 
         feats = feats.transpose(1, 0) # (seq_len, batch_size, tag_size)
@@ -180,7 +182,7 @@ class Att_BiLSTM_CRF(nn.Module):
     def _transition_score(self, tags):
         batch_size, seq_len = tags.size()
     
-        tags_t = torch.full((batch_size, seq_len + 2), self.tag_to_ix[self.STOP_TAG], dtype=torch.long)
+        tags_t = torch.full((batch_size, seq_len + 2), self.tag_to_ix[self.STOP_TAG], dtype=torch.long).to(self.device.type)
         tags_t[:, 0] = self.tag_to_ix[self.START_TAG]
         tags_t[:, 1:-1] = tags
 
@@ -212,7 +214,7 @@ class Att_BiLSTM_CRF(nn.Module):
         backpointers = []
 
         # Initialize the viterbi variables in log space
-        init_vvars = torch.full((1, self.tagset_size), -10000.)
+        init_vvars = torch.full((1, self.tagset_size), -10000.).to(self.device.type)
         init_vvars[0][self.tag_to_ix[self.START_TAG]] = 0
 
         # forward_var at step i holds the viterbi variables for step i-1
