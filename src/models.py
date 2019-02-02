@@ -157,6 +157,7 @@ class Att_BiLSTM_CRF(nn.Module):
         alpha[:, self.tag_to_ix[self.START_TAG]] = 0.
 
         feats = feats.transpose(1, 0) # (seq_len, batch_size, tag_size)
+        tags = tags.transpose(1, 0) # (seq_lenm batch_size)
         for feat, tag in zip(feats, tags):
             emit_score = feat.unsqueeze(-1).expand(batch_size, *self.transitions.size())
             alpha_t = alpha.unsqueeze(1).expand(batch_size, *self.transitions.size())
@@ -172,12 +173,12 @@ class Att_BiLSTM_CRF(nn.Module):
         return self._log_sum_exp(terminal_var, dim=-1)
 
     def _score_sentence(self, feats, tags):
-        transition_score = self._transition_score(feats, tags)
+        transition_score = self._transition_score(tags)
         lstm_score = self._lstm_score(feats, tags)
         return transition_score + lstm_score
 
-    def _transition_score(self, feats, tags):
-        batch_size, seq_len, _ = feats.size()
+    def _transition_score(self, tags):
+        batch_size, seq_len = tags.size()
     
         tags_t = torch.full((batch_size, seq_len + 2), self.tag_to_ix[self.STOP_TAG], dtype=torch.long)
         tags_t[:, 0] = self.tag_to_ix[self.START_TAG]
@@ -185,14 +186,14 @@ class Att_BiLSTM_CRF(nn.Module):
 
         mask = (tags_t[:, :-1] != self.tag_to_ix[self.PAD_TAG]).float()
 
-        tags_t[tags_t == 0] = self.tag_to_ix[self.STOP_TAG]
+        tags_t[tags_t == self.tag_to_ix[self.PAD_TAG]] = self.tag_to_ix[self.STOP_TAG]
         
-        next_tags = tags[:, 1:]
+        next_tags = tags_t[:, 1:]
         next_tags = next_tags.unsqueeze(-1).expand(*next_tags.size(), self.transitions.size(0))
         trans_t = self.transitions.expand(batch_size, *self.transitions.size())
         trans_row = torch.gather(trans_t, 1, next_tags)
         
-        prev_tags = tags[:, :-1]
+        prev_tags = tags_t[:, :-1]
         prev_tags = prev_tags.unsqueeze(-1)
         score = torch.gather(trans_row, 2, prev_tags).squeeze(-1)
         score = score * mask
@@ -264,6 +265,6 @@ class Att_BiLSTM_CRF(nn.Module):
             ignore_index: int
         """
         feats = self._get_lstm_features(inputs, sent_embs)
-        losses = self._score_sentence(feats, targets) - self._forward_alg(feats)
+        losses = self._score_sentence(feats, targets) - self._forward_alg(feats, targets)
 
         return -losses.mean()
