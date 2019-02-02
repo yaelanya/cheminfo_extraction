@@ -119,7 +119,6 @@ def train(model, data, epochs, batch_size, batch_generator):
                 loss = model.neg_log_likelihood(sentence_inputs, sentemb_inputs, tags, ignore_index=0)
             loss.backward()
             optimizer.step()
-            print(loss.item())
             epoch_loss += loss.item()
 
         end = time()
