@@ -91,6 +91,7 @@ class Att_BiLSTM_CRF(nn.Module):
     def __init__(self, vocab_size, tag_to_ix, embedding_dim, lstm1_units, lstm2_units):
         super(Att_BiLSTM_CRF, self).__init__()
 
+        self.PAD_TAG = "<PAD>"
         self.START_TAG = "<START>"
         self.STOP_TAG = "<STOP>"
 
@@ -129,8 +130,7 @@ class Att_BiLSTM_CRF(nn.Module):
             _, tag_seq = self._viterbi_decode(feats)
             tag_seq_batch.append(tag_seq)
 
-        # (batch_size, seq_len)
-        return torch.tensor(tag_seq_batch)
+        return torch.tensor(tag_seq_batch)  # (batch_size, seq_len)
 
     def _get_lstm_features(self, inputs, sent_embs):
         batch_size = inputs.size(0)
@@ -150,19 +150,22 @@ class Att_BiLSTM_CRF(nn.Module):
 
         return lstm_feats.view(-1, batch_size, self.tagset_size).transpose(1, 0)
 
-    def _forward_alg(self, feats):
+    def _forward_alg(self, feats, tags):
         batch_size = feats.size(0)
 
         alpha = torch.full((batch_size, self.tagset_size), -10000.)
         alpha[:, self.tag_to_ix[self.START_TAG]] = 0.
 
         feats = feats.transpose(1, 0) # (seq_len, batch_size, tag_size)
-        for feat in feats:
+        for feat, tag in zip(feats, tags):
             emit_score = feat.unsqueeze(-1).expand(batch_size, *self.transitions.size())
             alpha_t = alpha.unsqueeze(1).expand(batch_size, *self.transitions.size())
             trains_t = self.transitions.expand(batch_size, *self.transitions.size())
             next_tag_var = alpha_t + trains_t + emit_score
-            alpha = self._log_sum_exp(next_tag_var, dim=-1)
+            next_alpha = self._log_sum_exp(next_tag_var, dim=-1)
+
+            mask = (tag != self.tag_to_ix[self.PAD_TAG]).float().unsqueeze(-1).expand_as(alpha)
+            alpha = mask * next_alpha + (1 - mask) * alpha
 
         terminal_var = alpha + self.transitions[self.tag_to_ix[self.STOP_TAG]].expand(*alpha.size())
 
@@ -174,12 +177,15 @@ class Att_BiLSTM_CRF(nn.Module):
         return transition_score + lstm_score
 
     def _transition_score(self, feats, tags):
-        batch_size = feats.size(0)
+        batch_size, seq_len, _ = feats.size()
     
-        start_tag = torch.full((batch_size, 1), self.tag_to_ix[self.START_TAG], dtype=torch.long)
-        stop_tag = torch.full((batch_size, 1), self.tag_to_ix[self.STOP_TAG], dtype=torch.long)
-        tags = torch.cat((start_tag, tags), dim=-1)
-        tags = torch.cat((tags, stop_tag), dim=-1)
+        tags_t = torch.full((batch_size, seq_len + 2), self.tag_to_ix[self.STOP_TAG], dtype=torch.long)
+        tags_t[:, 0] = self.tag_to_ix[self.START_TAG]
+        tags_t[:, 1:-1] = tags
+
+        mask = (tags_t[:, :-1] != self.tag_to_ix[self.PAD_TAG]).float()
+
+        tags_t[tags_t == 0] = self.tag_to_ix[self.STOP_TAG]
         
         next_tags = tags[:, 1:]
         next_tags = next_tags.unsqueeze(-1).expand(*next_tags.size(), self.transitions.size(0))
@@ -188,14 +194,18 @@ class Att_BiLSTM_CRF(nn.Module):
         
         prev_tags = tags[:, :-1]
         prev_tags = prev_tags.unsqueeze(-1)
-        score = torch.gather(trans_row, 2, prev_tags)
-        
+        score = torch.gather(trans_row, 2, prev_tags).squeeze(-1)
+        score = score * mask
+
         return score.squeeze(-1).sum(-1)
     
     def _lstm_score(self, feats, tags):
+        mask = (tags != self.tag_to_ix[self.PAD_TAG]).float()
         tags = tags.unsqueeze(-1)
-        score = torch.gather(feats, 2, tags)
-        return score.squeeze(-1).sum(-1)
+        score = torch.gather(feats, 2, tags).squeeze(-1)
+        score = mask * score
+
+        return score.sum(-1)
 
     def _viterbi_decode(self, feats):
         backpointers = []
@@ -246,7 +256,7 @@ class Att_BiLSTM_CRF(nn.Module):
         max_exp = _max.unsqueeze(-1).expand_as(vec)
         return _max + torch.log(torch.sum(torch.exp(vec - max_exp), dim))
 
-    def neg_log_likelihood(self, inputs, sent_embs, targets, ignore_index=0):
+    def neg_log_likelihood(self, inputs, sent_embs, targets):
         """
         Args:
             inputs: (batch_size, seq_len)
