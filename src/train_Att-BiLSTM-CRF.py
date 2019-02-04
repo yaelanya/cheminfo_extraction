@@ -59,23 +59,24 @@ def main(args):
     batch_generator.get_section_embs(valid_df)
 
     print("Start training...")
+    early_stopping = EarlyStopping(patience=args.early_stopping)
     train(model
           , (train_sentences, train_sentembs_hash, train_tag_seq)
           , (valid_sentences, valid_sentembs_hash, valid_tag_seq)
           , epochs=args.epochs
-          , batch_generator=batch_generator)
+          , batch_generator=batch_generator
+          , early_stopping=early_stopping)
 
     print("Save model")
     torch.save(model.state_dict(), args.output)
 
-def train(model, train_data, valid_data, epochs, batch_generator):
+def train(model, train_data, valid_data, epochs, batch_generator, early_stopping):
     writer = tbx.SummaryWriter()
 
     train_sentences, train_sentembs_hash, train_tag_seq = train_data
     valid_sentences, valid_sentembs_hash, valid_tag_seq = valid_data
     optimizer = torch.optim.Adam(model.parameters())
 
-    early_stopping = EarlyStopping(patience=5)
     for epoch in range(epochs):
         start = time()
 
@@ -116,11 +117,12 @@ def train(model, train_data, valid_data, epochs, batch_generator):
         writer.add_scalar('valid_loss', valid_loss, global_step=(epoch + 1))
         print("Epoch {0} \t train loss: {1} \t valid loss: {2} \t exec time: {3}s".format((epoch + 1), train_loss, valid_loss, end - start))
 
-        early_stopping(model, valid_loss)
-        if early_stopping.is_stop():
-            print("Early stopping.")
-            model.load_state_dict(torch.load('checkpoint.pt'))
-            break
+        if early_stopping is not None:
+            early_stopping(model, valid_loss)
+            if early_stopping.is_stop():
+                print("Early stopping.")
+                model.load_state_dict(torch.load('checkpoint.pt'))
+                break
 
     writer.close()
 
@@ -160,13 +162,14 @@ if __name__ == "__main__":
     parser.add_argument('--train_data', type=str)
     parser.add_argument('--valid_data', type=str)
     parser.add_argument('--output', type=str)
-    parser.add_argument('--bilm_model_path', type=str)
     parser.add_argument('--epochs', default=10, type=int)
+    parser.add_argument('--early_stopping', default=None, type=int)
     parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--word_emb_size', default=100, type=int)
     parser.add_argument('--lstm1_units', default=100, type=int)
     parser.add_argument('--lstm2_units', default=200, type=int)
     parser.add_argument('--transfer', default=True, type=bool)
+    parser.add_argument('--bilm_model_path', type=str)
     parser.add_argument('--bilm_emb_size', default=100, type=int)
     parser.add_argument('--bilm_lstm_units', default=100, type=int)
 
