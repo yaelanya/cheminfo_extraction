@@ -56,14 +56,18 @@ class BatchGenerator(object):
 
 def main(args):
     train_df = pd.read_pickle(args.train_data)
+    valid_df = pd.read_pickle(args.valid_data)
     train_df.fillna('NO_SUBTITLE', inplace=True)
-    tokenizer = get_tokenizer(args.transfer, train_df.repl_words.tolist())
+    valid_df.fillna('NO_SUBTITLE', inplace=True)
+    tokenizer = get_tokenizer(args.transfer
+                              , train_df.repl_words.tolist() + valid_df.repl_words.tolist())
 
     model = Att_BiLSTM_CRF(vocab_size=len(tokenizer.vocab_word)
                            , tag_to_ix=tokenizer.vocab_tag
                            , embedding_dim=args.word_emb_size
                            , lstm1_units=args.lstm1_units
                            , lstm2_units=args.lstm2_units)
+
     if args.transfer:
         bilm_model = BiLM(embedding_dim=args.bilm_emb_size
                           , lstm_units=args.bilm_lstm_units
@@ -73,7 +77,7 @@ def main(args):
     # choice CPU / GPU mode
     if torch.cuda.device_count() > 1:
         print("Use", torch.cuda.device_count(), "GPUs.")
-        #model = torch.nn.DataParallel(model)
+        model = torch.nn.DataParallel(model)
     elif torch.cuda.device_count() == 1:
         print("Use single GPU.")
     else:
@@ -81,18 +85,26 @@ def main(args):
     
     model.to(DEVICE)
     
-    # make training data
-    sentences = tokenizer.transform_word(train_df.repl_words.tolist())
-    sentembs_hash = train_df.apply(lambda x: x._id + x.h2, axis=1).tolist()
-    tag_seq = tokenizer.transform_tag(train_df.production_tag_seq.tolist())
+    print("Creating data...")
+    # create training data
+    train_sentences = tokenizer.transform_word(train_df.repl_words.tolist())
+    train_sentembs_hash = train_df.apply(lambda x: x._id + x.h2, axis=1).tolist()
+    train_tag_seq = tokenizer.transform_tag(train_df.production_tag_seq.tolist())
 
-    # make mini-batch generator
+    # create valid data
+    valid_sentences = tokenizer.transform_word(valid_df.repl_words.tolist())
+    valid_sentembs_hash = valid_df.apply(lambda x: x._id + x.h2, axis=1).tolist()
+    valid_tag_seq = tokenizer.transform_tag(valid_df.production_tag_seq.tolist())
+
+    # create mini-batch generator
     batch_generator = BatchGenerator()
     batch_generator.get_section_embs(train_df)
+    batch_generator.get_section_embs(valid_df)
 
     print("Start training...")
     train(model
-          , (sentences, sentembs_hash, tag_seq)
+          , (train_sentences, train_sentembs_hash, train_tag_seq)
+          , (valid_sentences, valid_sentembs_hash, valid_tag_seq)
           , epochs=args.epochs
           , batch_size=args.batch_size
           , batch_generator=batch_generator)
@@ -100,32 +112,53 @@ def main(args):
     print("Save model")
     torch.save(model.state_dict(), args.output)
 
-def train(model, data, epochs, batch_size, batch_generator):
+def train(model, train_data, valid_data, epochs, batch_size, batch_generator):
     writer = tbx.SummaryWriter()
 
-    sentences, sentembs_hash, tag_seq = data
-    num_batches = np.ceil(len(sentences) / batch_size).astype(np.int)
+    train_sentences, train_sentembs_hash, train_tag_seq = train_data
+    valid_sentences, valid_sentembs_hash, valid_tag_seq = valid_data
     optimizer = torch.optim.Adam(model.parameters())
 
     for epoch in range(epochs):
-        epoch_loss = 0.0
         start = time()
+
+        # training phase
+        model.train()
+        train_losses = []
         for sentence_inputs, sentemb_inputs, tags in \
-                batch_generator.generator(sentences, sentembs_hash, tag_seq, batch_size):
+                batch_generator.generator(train_sentences, train_sentembs_hash, train_tag_seq, batch_size):
             model.zero_grad()
             if isinstance(model, torch.nn.DataParallel):
                 loss = model.module.neg_log_likelihood(sentence_inputs, sentemb_inputs, tags)
             else:
                 loss = model.neg_log_likelihood(sentence_inputs, sentemb_inputs, tags)
+            
             loss.backward()
             optimizer.step()
-            epoch_loss += loss.item()
+            
+            train_losses.append(loss.item())
+
+        # validation phase
+        model.eval()
+        valid_losses = []
+        for sentence_inputs, sentemb_inputs, tags in \
+                batch_generator.generator(valid_sentences, valid_sentembs_hash, valid_tag_seq, batch_size):
+            with torch.no_grad():
+                if isinstance(model, torch.nn.DataParallel):
+                    loss = model.module.neg_log_likelihood(sentence_inputs, sentemb_inputs, tags)
+                else:
+                    loss = model.neg_log_likelihood(sentence_inputs, sentemb_inputs, tags)
+            
+            valid_losses.append(loss.item())
 
         end = time()
-        epoch_loss /= num_batches
-        writer.add_scalar('epoch_loss', epoch_loss, global_step=(epoch + 1))
-        print("Epoch", (epoch + 1), ":", epoch_loss, "Exec time:", end - start, "s")
-    
+
+        train_loss = np.mean(train_losses)
+        valid_loss = np.mean(valid_losses)
+        writer.add_scalar('train_loss', train_loss, global_step=(epoch + 1))
+        writer.add_scalar('valid_loss', valid_loss, global_step=(epoch + 1))
+        print("Epoch {0} \t train loss: {1} \t valid loss: {2} \t exec time: {3}s".format((epoch + 1), train_loss, valid_loss, end - start))
+
     writer.close()
 
     return model
@@ -162,6 +195,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Training model")
     parser.add_argument('--train_data', type=str)
+    parser.add_argument('--valid_data', type=str)
     parser.add_argument('--output', type=str)
     parser.add_argument('--bilm_model_path', type=str)
     parser.add_argument('--epochs', default=10, type=int)
