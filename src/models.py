@@ -261,7 +261,7 @@ class Att_BiLSTM_CRF(nn.Module):
 
     def _argmax(self, vec):
         # return the argmax as a python int
-        _, idx = torch.max(vec, 1)
+        _, idx = torch.max(vec, -1)
         return idx.item()
 
 
@@ -274,6 +274,6 @@ class Att_BiLSTM_CRF(nn.Module):
             ignore_index: int
         """
         feats = self._get_lstm_features(inputs, sent_embs)
-        losses = self._score_sentence(feats, targets) - self._forward_alg(feats, targets)
+        losses =  self._forward_alg(feats, targets) - self._score_sentence(feats, targets)
 
-        return -losses.mean()
+        return losses.mean()
