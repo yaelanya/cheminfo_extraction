@@ -54,7 +54,7 @@ def main(args):
     valid_tag_seq = tokenizer.transform_tag(valid_df.production_tag_seq.tolist())
 
     # create mini-batch generator
-    batch_generator = BatchGenerator()
+    batch_generator = BatchGenerator(batch_size=args.batch_size, shuffle=True)
     batch_generator.get_section_embs(train_df)
     batch_generator.get_section_embs(valid_df)
 
@@ -63,13 +63,12 @@ def main(args):
           , (train_sentences, train_sentembs_hash, train_tag_seq)
           , (valid_sentences, valid_sentembs_hash, valid_tag_seq)
           , epochs=args.epochs
-          , batch_size=args.batch_size
           , batch_generator=batch_generator)
 
     print("Save model")
     torch.save(model.state_dict(), args.output)
 
-def train(model, train_data, valid_data, epochs, batch_size, batch_generator):
+def train(model, train_data, valid_data, epochs, batch_generator):
     writer = tbx.SummaryWriter()
 
     train_sentences, train_sentembs_hash, train_tag_seq = train_data
@@ -84,7 +83,7 @@ def train(model, train_data, valid_data, epochs, batch_size, batch_generator):
         model.train()
         train_losses = []
         for sentence_inputs, sentemb_inputs, tags in \
-                batch_generator.generator(train_sentences, train_sentembs_hash, train_tag_seq, batch_size):
+                batch_generator.generator(train_sentences, train_sentembs_hash, train_tag_seq):
             model.zero_grad()
             if isinstance(model, torch.nn.DataParallel):
                 loss = model.module.neg_log_likelihood(sentence_inputs, sentemb_inputs, tags)
@@ -100,7 +99,7 @@ def train(model, train_data, valid_data, epochs, batch_size, batch_generator):
         model.eval()
         valid_losses = []
         for sentence_inputs, sentemb_inputs, tags in \
-                batch_generator.generator(valid_sentences, valid_sentembs_hash, valid_tag_seq, batch_size):
+                batch_generator.generator(valid_sentences, valid_sentembs_hash, valid_tag_seq):
             with torch.no_grad():
                 if isinstance(model, torch.nn.DataParallel):
                     loss = model.module.neg_log_likelihood(sentence_inputs, sentemb_inputs, tags)

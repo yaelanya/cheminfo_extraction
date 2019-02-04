@@ -259,6 +259,13 @@ class Att_BiLSTM_CRF(nn.Module):
         max_exp = _max.unsqueeze(-1).expand_as(vec)
         return _max + torch.log(torch.sum(torch.exp(vec - max_exp), dim))
 
+    def _argmax(self, vec):
+        # return the argmax as a python int
+        _, idx = torch.max(vec, 1)
+        return idx.item()
+
+
+
     def neg_log_likelihood(self, inputs, sent_embs, targets):
         """
         Args:

@@ -12,7 +12,7 @@ def attach_BOS_EOS(sentences):
     return _sents
 
 class EarlyStopping(object):
-    def __init__(self, patience):
+    def __init__(self, patience=5):
         self.best_loss_score = np.Inf
         self.patience = patience
         self.counter = 0
@@ -37,21 +37,29 @@ class EarlyStopping(object):
             return False
 
 class BatchGenerator(object):
-    def __init__(self):
+    def __init__(self, batch_size=32, shuffle=True):
         self.section_embs_dict = {}
+        self.batch_size = batch_size
+        self.shuffle = shuffle
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
             
-    def generator(self, sentences, sentembs_hash, tag_seq, batch_size):
+    def generator(self, sentences, sentembs_hash, tag_seq):
         data_size = len(sentences)
-        num_batches = np.ceil(data_size / batch_size).astype(np.int)
+        num_batches = np.ceil(data_size / self.batch_size).astype(np.int)
 
-        shuffle_indices = np.random.permutation(np.arange(data_size))
-        _sentences = np.array(sentences)[shuffle_indices]
-        _sentembs_hash = np.array(sentembs_hash)[shuffle_indices]
-        _tag_seq = np.array(tag_seq)[shuffle_indices]
+        if self.shuffle:
+            shuffle_indices = np.random.permutation(np.arange(data_size))
+            _sentences = np.array(sentences)[shuffle_indices]
+            _sentembs_hash = np.array(sentembs_hash)[shuffle_indices]
+            _tag_seq = np.array(tag_seq)[shuffle_indices]
+        else:
+            _sentences = np.array(sentences)
+            _sentembs_hash = np.array(sentembs_hash)
+            _tag_seq = np.array(tag_seq)
+
         for batch_num in range(num_batches):
-            start_index = batch_num * batch_size
-            end_index = min((batch_num + 1) * batch_size, data_size)
+            start_index = batch_num * self.batch_size
+            end_index = min((batch_num + 1) * self.batch_size, data_size)
 
             batch_sentences = _sentences[start_index:end_index]
             batch_sentembs_hash = _sentembs_hash[start_index:end_index]
@@ -61,12 +69,7 @@ class BatchGenerator(object):
             sentemb_inputs = self.pad_sentembs([self.section_embs_dict[_hash] for _hash in batch_sentembs_hash])
             outputs = torch.tensor(pad_sequences(batch_tag_seq, padding='post')).long()
 
-            if self.device.type != "cpu":
-                sentence_inputs = sentence_inputs.cuda()
-                sentemb_inputs = sentemb_inputs.cuda()
-                outputs = outputs.cuda()
-
-            yield sentence_inputs, sentemb_inputs, outputs
+            yield sentence_inputs.to(self.device), sentemb_inputs.to(self.device), outputs.to(self.device)
 
     def pad_sentembs(self, sent_embs):
         max_len = len(max(sent_embs, key=len))
