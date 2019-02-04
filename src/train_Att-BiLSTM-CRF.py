@@ -59,7 +59,10 @@ def main(args):
     batch_generator.get_section_embs(valid_df)
 
     print("Start training...")
-    early_stopping = EarlyStopping(patience=args.early_stopping)
+    if args.early_stopping:
+        early_stopping = EarlyStopping(patience=args.early_stopping)
+    else:
+        early_stopping = None
     train(model
           , (train_sentences, train_sentembs_hash, train_tag_seq)
           , (valid_sentences, valid_sentembs_hash, valid_tag_seq)
