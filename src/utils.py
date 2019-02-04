@@ -1,3 +1,7 @@
+import numpy as np
+import torch
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
 
 def attach_BOS_EOS(sentences):
     _sents = sentences.copy()
@@ -7,6 +11,72 @@ def attach_BOS_EOS(sentences):
     
     return _sents
 
+class EarlyStopping(object):
+    def __init__(self, patience):
+        self.best_loss_score = np.Inf
+        self.patience = patience
+        self.counter = 0
+        self.stop = False
+    
+    def __call__(self, model, val_loss):
+        if val_loss < self.best_loss_score:
+            print("save best model.")
+            self.best_loss_score = val_loss
+            self.save_checkpoint(model)
+            self.counter = 0
+        else:
+            self.counter += 1
+            
+    def save_checkpoint(self, model):
+        torch.save(model.state_dict(), "checkpoint.pt")
+        
+    def is_stop(self):
+        if self.counter >= self.patience:
+            return True
+        else:
+            return False
+
+class BatchGenerator(object):
+    def __init__(self):
+        self.section_embs_dict = {}
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            
+    def generator(self, sentences, sentembs_hash, tag_seq, batch_size):
+        data_size = len(sentences)
+        num_batches = np.ceil(data_size / batch_size).astype(np.int)
+
+        shuffle_indices = np.random.permutation(np.arange(data_size))
+        _sentences = np.array(sentences)[shuffle_indices]
+        _sentembs_hash = np.array(sentembs_hash)[shuffle_indices]
+        _tag_seq = np.array(tag_seq)[shuffle_indices]
+        for batch_num in range(num_batches):
+            start_index = batch_num * batch_size
+            end_index = min((batch_num + 1) * batch_size, data_size)
+
+            batch_sentences = _sentences[start_index:end_index]
+            batch_sentembs_hash = _sentembs_hash[start_index:end_index]
+            batch_tag_seq = _tag_seq[start_index:end_index]
+
+            sentence_inputs = torch.tensor(pad_sequences(batch_sentences, padding='post')).long()
+            sentemb_inputs = self.pad_sentembs([self.section_embs_dict[_hash] for _hash in batch_sentembs_hash])
+            outputs = torch.tensor(pad_sequences(batch_tag_seq, padding='post')).long()
+
+            if self.device.type != "cpu":
+                sentence_inputs = sentence_inputs.cuda()
+                sentemb_inputs = sentemb_inputs.cuda()
+                outputs = outputs.cuda()
+
+            yield sentence_inputs, sentemb_inputs, outputs
+
+    def pad_sentembs(self, sent_embs):
+        max_len = len(max(sent_embs, key=len))
+        return torch.stack(
+            [torch.cat((embs, torch.zeros(((max_len - embs.size(0)), 200)))) for embs in sent_embs]
+        )
+
+    def get_section_embs(self, data):
+        for (_id, section), g in data.groupby(['_id', 'h2']):
+            self.section_embs_dict[_id + section] = torch.stack(g.sentence_emb.tolist())
 
 class Tokenizer(object):
     def __init__(self):

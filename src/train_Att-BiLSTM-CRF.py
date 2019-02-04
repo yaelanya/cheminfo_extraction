@@ -4,54 +4,11 @@ import pandas as pd
 import json
 import torch
 import tensorboardX as tbx
-from tensorflow.keras.preprocessing.sequence import pad_sequences
 from time import time
 
 from models import BiLM, Att_BiLSTM_CRF
 from losses import SoftmaxLoss
-import utils
-
-
-class BatchGenerator(object):
-    def __init__(self):
-        self.section_embs_dict = {}
-            
-    def generator(self, sentences, sentembs_hash, tag_seq, batch_size):
-        data_size = len(sentences)
-        num_batches = np.ceil(data_size / batch_size).astype(np.int)
-
-        shuffle_indices = np.random.permutation(np.arange(data_size))
-        _sentences = np.array(sentences)[shuffle_indices]
-        _sentembs_hash = np.array(sentembs_hash)[shuffle_indices]
-        _tag_seq = np.array(tag_seq)[shuffle_indices]
-        for batch_num in range(num_batches):
-            start_index = batch_num * batch_size
-            end_index = min((batch_num + 1) * batch_size, data_size)
-
-            batch_sentences = _sentences[start_index:end_index]
-            batch_sentembs_hash = _sentembs_hash[start_index:end_index]
-            batch_tag_seq = _tag_seq[start_index:end_index]
-
-            sentence_inputs = torch.tensor(pad_sequences(batch_sentences, padding='post')).long()
-            sentemb_inputs = self.pad_sentembs([self.section_embs_dict[_hash] for _hash in batch_sentembs_hash])
-            outputs = torch.tensor(pad_sequences(batch_tag_seq, padding='post')).long()
-
-            if DEVICE.type != "cpu":
-                sentence_inputs = sentence_inputs.cuda()
-                sentemb_inputs = sentemb_inputs.cuda()
-                outputs = outputs.cuda()
-
-            yield sentence_inputs, sentemb_inputs, outputs
-
-    def pad_sentembs(self, sent_embs):
-        max_len = len(max(sent_embs, key=len))
-        return torch.stack(
-            [torch.cat((embs, torch.zeros(((max_len - embs.size(0)), 200)))) for embs in sent_embs]
-        )
-
-    def get_section_embs(self, data):
-        for (_id, section), g in data.groupby(['_id', 'h2']):
-            self.section_embs_dict[_id + section] = torch.stack(g.sentence_emb.tolist())
+from utils import BatchGenerator, EarlyStopping, Tokenizer
 
 
 def main(args):
@@ -119,6 +76,7 @@ def train(model, train_data, valid_data, epochs, batch_size, batch_generator):
     valid_sentences, valid_sentembs_hash, valid_tag_seq = valid_data
     optimizer = torch.optim.Adam(model.parameters())
 
+    early_stopping = EarlyStopping(patience=5)
     for epoch in range(epochs):
         start = time()
 
@@ -159,12 +117,18 @@ def train(model, train_data, valid_data, epochs, batch_size, batch_generator):
         writer.add_scalar('valid_loss', valid_loss, global_step=(epoch + 1))
         print("Epoch {0} \t train loss: {1} \t valid loss: {2} \t exec time: {3}s".format((epoch + 1), train_loss, valid_loss, end - start))
 
+        early_stopping(model, valid_loss)
+        if early_stopping.is_stop():
+            print("Early stopping.")
+            model.load_state_dict(torch.load('checkpoint.pt'))
+            break
+
     writer.close()
 
     return model
 
 def get_tokenizer(is_transfer, sentences=None):
-    tokenizer = utils.Tokenizer()
+    tokenizer = Tokenizer()
 
     tokenizer.vocab_tag = {
         '<PAD>': 0
