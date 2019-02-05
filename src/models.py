@@ -140,17 +140,21 @@ class Att_BiLSTM_CRF(nn.Module):
         embeds = self.word_embeds(inputs) # (batch_size, seq_len, embedding_dim)
         embeds = embeds.transpose(0, 1) # (seq_len, batch_size, embedding_dim)
         lstm1_out, _ = self.lstm_1(embeds) # (seq_len, batch_size, 2*lstm1_units)
-        lstm1_out = lstm1_out.transpose(0, 1)
+        lstm1_out = lstm1_out.transpose(0, 1) # (batch_size, seq_len, 2*lstm1_units)
         if sent_embs is not None:
-            attention_out, _ = self.att(lstm1_out, sent_embs) # (seq_len, batch_size, 2*2*lstm1_units)
+            attention_out, _ = self.att(lstm1_out, sent_embs) # (batch_size, seq_len, 2*2*lstm1_units)
         else:
             attention_out, _ = self.att(lstm1_out, lstm1_out)
+
+        attention_out = attention_out.transpose(1, 0) # (seq_len, batch_size, 2*2*lstm1_units)
         lstm2_out, _ = self.lstm_2(attention_out) # (seq_len, batch_size, 2*lstm2_units)
+        lstm2_out = lstm2_out.transpose(1, 0) # (batch_size, seq_len, 2*lstm2_units)
+        
+        lstm2_out = lstm2_out.contiguous()
+        lstm2_out = lstm2_out.view(-1, 2*self.lstm2_units) # (batch_size*seq_len, 2*lstm2_units)
+        lstm_feats = self.hidden2tag(lstm2_out) # (batch_size*seq_len, tagset_size)
 
-        lstm2_out = lstm2_out.view(-1, 2*self.lstm2_units) # (seq_len*batch_size, 2*lstm2_units)
-        lstm_feats = self.hidden2tag(lstm2_out) # (seq_len*batch_size, tagset_size)
-
-        return lstm_feats.view(-1, batch_size, self.tagset_size).transpose(1, 0)
+        return lstm_feats.view(batch_size, -1, self.tagset_size) # (batch_size, seq_len, tagset_size)
 
     def _forward_alg(self, feats, tags):
         batch_size = feats.size(0)
