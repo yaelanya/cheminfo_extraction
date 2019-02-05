@@ -42,16 +42,8 @@ def main(args):
     
     model.to(DEVICE)
     
-    print("Creating data...")
-    # create training data
-    train_sentences = tokenizer.transform_word(train_df.repl_words.tolist())
-    train_sentembs_hash = train_df.apply(lambda x: x._id + x.h2, axis=1).tolist()
-    train_tag_seq = tokenizer.transform_tag(train_df.production_tag_seq.tolist())
-
-    # create valid data
-    valid_sentences = tokenizer.transform_word(valid_df.repl_words.tolist())
-    valid_sentembs_hash = valid_df.apply(lambda x: x._id + x.h2, axis=1).tolist()
-    valid_tag_seq = tokenizer.transform_tag(valid_df.production_tag_seq.tolist())
+    train_sentences, train_sentembs_hash, train_tag_seq = get_data(train_df, args.target_col)
+    valid_sentences, valid_sentembs_hash, valid_tag_seq = get_data(valid_df, args.target_col)
 
     # create mini-batch generator
     batch_generator = BatchGenerator(batch_size=args.batch_size, shuffle=True)
@@ -131,6 +123,12 @@ def train(model, train_data, valid_data, epochs, batch_generator, early_stopping
 
     return model
 
+def get_data(data, target_col):
+    sentences = tokenizer.transform_word(data.repl_words.tolist())
+    sentembs_hash = data.apply(lambda x: x._id + x.h2, axis=1).tolist()
+    tag_seq = tokenizer.transform_tag(data[target_col].tolist())
+    return sentences, sentembs_hash, tag_seq
+
 def get_tokenizer(is_transfer, sentences=None):
     tokenizer = Tokenizer()
 
@@ -164,6 +162,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Training model")
     parser.add_argument('--train_data', type=str)
     parser.add_argument('--valid_data', type=str)
+    parser.add_argument('--target_col', type=str)
     parser.add_argument('--output', type=str)
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--early_stopping', default=None, type=int)
