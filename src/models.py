@@ -88,7 +88,7 @@ class Att_BiLSTM_CRF(nn.Module):
     """
     reference: https://pytorch.org/tutorials/beginner/nlp/advanced_tutorial.html
     """
-    def __init__(self, vocab_size, tag_to_ix, embedding_dim, lstm1_units, lstm2_units):
+    def __init__(self, vocab_size, tag_to_ix, embedding_dim, lstm1_units, lstm2_units, dropout=0.5):
         super(Att_BiLSTM_CRF, self).__init__()
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -105,6 +105,7 @@ class Att_BiLSTM_CRF(nn.Module):
         self.tagset_size = len(tag_to_ix)
 
         self.word_embeds = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
+        self.dropout = nn.Dropout(p=dropout)
         self.lstm_1 = nn.LSTM(embedding_dim, lstm1_units, num_layers=1, bidirectional=True)
         self.att = Attention(2*lstm1_units)
         self.lstm_2 = nn.LSTM(2*2*lstm1_units, lstm2_units, num_layers=1, bidirectional=True)
@@ -139,7 +140,7 @@ class Att_BiLSTM_CRF(nn.Module):
 
         embeds = self.word_embeds(inputs) # (batch_size, seq_len, embedding_dim)
         embeds = embeds.transpose(0, 1) # (seq_len, batch_size, embedding_dim)
-        lstm1_out, _ = self.lstm_1(embeds) # (seq_len, batch_size, 2*lstm1_units)
+        lstm1_out, _ = self.lstm_1(self.dropout(embeds)) # (seq_len, batch_size, 2*lstm1_units)
         lstm1_out = lstm1_out.transpose(0, 1) # (batch_size, seq_len, 2*lstm1_units)
         if sent_embs is not None:
             attention_out, _ = self.att(lstm1_out, sent_embs) # (batch_size, seq_len, 2*2*lstm1_units)
