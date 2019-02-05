@@ -42,8 +42,8 @@ def main(args):
     
     model.to(DEVICE)
     
-    train_sentences, train_sentembs_hash, train_tag_seq = get_data(train_df, args.target_col)
-    valid_sentences, valid_sentembs_hash, valid_tag_seq = get_data(valid_df, args.target_col)
+    train_sentences, train_sentembs_hash, train_tag_seq = get_data(train_df, args.target_col, tokenizer)
+    valid_sentences, valid_sentembs_hash, valid_tag_seq = get_data(valid_df, args.target_col, tokenizer)
 
     # create mini-batch generator
     batch_generator = BatchGenerator(batch_size=args.batch_size, shuffle=True)
@@ -123,7 +123,7 @@ def train(model, train_data, valid_data, epochs, batch_generator, early_stopping
 
     return model
 
-def get_data(data, target_col):
+def get_data(data, target_col, tokenizer):
     sentences = tokenizer.transform_word(data.repl_words.tolist())
     sentembs_hash = data.apply(lambda x: x._id + x.h2, axis=1).tolist()
     tag_seq = tokenizer.transform_tag(data[target_col].tolist())
