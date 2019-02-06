@@ -17,28 +17,44 @@ class BiLM(nn.Module):
         Args:
             inputs: (batch_size, seq_len)
         """
-        inputs = inputs.transpose(0, 1) # (seq_len, batch_size)
         embs = self.embedding(inputs)
+        embs = embs.transpose(1, 0) # (seq_len, batch_size, embedding_dim)
         output, (h, c) = self.bi_lstm(embs)
+        output = output.transpose(1, 0) # (batch_size, seq_len, 2*lstm_units)
         forward_output, backword_output = output[:, :, :self.lstm_units], output[:, :, self.lstm_units:]
         
         # shape: (batch_size * timesteps, lstm_units)
         forward_mask, backward_mask = self._get_mask(inputs)
-        forward_output = forward_output[forward_mask]
-        backword_output = backword_output[backward_mask]
-        
-        # Log-softmax
-        forward_output = self._calc_proba(forward_output)
-        backword_output = self._calc_proba(backword_output)
-        
-        return forward_output, backword_output, c
+        forward_output = forward_output.masked_select(forward_mask).view(-1, self.lstm_units)
+        backword_output = backword_output.masked_select(backward_mask).view(-1, self.lstm_units)
 
-    def _calc_proba(self, embeddings):
-        return nn.functional.log_softmax(self.linear(embeddings), dim=-1)
+        # shape: (batch_size * timesteps, vocab_size)
+        forward_output = nn.functional.log_softmax(self.linear(forward_output), dim=-1)
+        backword_output = nn.functional.log_softmax(self.linear(backword_output), dim=-1)
+        
+        loss = self._softmax_loss(forward_output, backword_output, inputs)
+
+        return loss, h, c
+
+    def _softmax_loss(self, forward_output, backward_output, targets):
+        # target shape: (batch_size * timesteps,)
+        if targets.dim() > 1:
+            targets = targets.view(-1)
+
+        # except PAD, BOS and EOS
+        targets = targets[targets > 2]
+        num_targets = torch.sum(targets > 2)
+
+        forward_loss = torch.nn.functional.nll_loss(forward_output, targets, reduction='sum')
+        backward_loss = torch.nn.functional.nll_loss(backward_output, targets, reduction='sum')
+
+        average_loss = 0.5 * (forward_loss + backward_loss) / num_targets
+
+        return average_loss
     
     def _get_mask(self, inputs):
-        forward_mask = torch.cat((inputs[1:], inputs[:1])) > 2
-        backward_mask = torch.cat((inputs[-1:], inputs[:-1])) > 2
+        forward_mask = torch.cat((inputs[:, 1:], inputs[:, :1]), dim=1) > 2
+        backward_mask = torch.cat((inputs[:, -1:], inputs[:, :-1]), dim=1) > 2
         
         return forward_mask, backward_mask
 
