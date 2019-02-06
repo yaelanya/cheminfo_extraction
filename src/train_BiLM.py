@@ -44,7 +44,6 @@ def main(args):
 def train(model, train_data, valid_data, epochs, batch_size, patience):
     writer = tbx.SummaryWriter()
 
-    loss_func = SoftmaxLoss()
     optimizer = torch.optim.Adam(model.parameters())
     early_stopping = EarlyStopping(patience=patience)
     for epoch in range(epochs):
@@ -54,8 +53,7 @@ def train(model, train_data, valid_data, epochs, batch_size, patience):
         train_losses = []
         for i, minibatch in batch_generator(train_data, batch_size):
             model.zero_grad()
-            forward_output, backword_output, _ = model(minibatch)
-            loss = loss_func(forward_output, backword_output, minibatch)
+            loss, _, _ = model(minibatch)
             loss.backward()
             optimizer.step()
             train_losses.append(loss.item())
@@ -65,8 +63,7 @@ def train(model, train_data, valid_data, epochs, batch_size, patience):
         valid_losses = []
         for i, minibatch in batch_generator(valid_data, batch_size):
             with torch.no_grad():
-                forward_output, backword_output, _ = model(minibatch)
-                loss = loss_func(forward_output, backword_output, minibatch)
+                loss, _, _ = model(minibatch)
                 valid_losses.append(loss.item())
 
         end = time()
