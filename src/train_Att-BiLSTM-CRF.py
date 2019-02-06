@@ -7,8 +7,7 @@ import tensorboardX as tbx
 from time import time
 
 from models import BiLM, Att_BiLSTM_CRF
-from losses import SoftmaxLoss
-from utils import BatchGenerator, EarlyStopping, Tokenizer
+from utils import EarlyStopping, Tokenizerm, BatchGeneratorWithUnderSampling
 
 
 def main(args):
@@ -44,9 +43,12 @@ def main(args):
     
     train_sentences, train_sentembs_hash, train_tag_seq = get_data(train_df, args.target_col, tokenizer)
     valid_sentences, valid_sentembs_hash, valid_tag_seq = get_data(valid_df, args.target_col, tokenizer)
-
+    
     # create mini-batch generator
-    batch_generator = BatchGenerator(batch_size=args.batch_size, shuffle=True)
+    batch_generator = BatchGeneratorWithUnderSampling(tokenizer.vocab_tag
+                                                      , batch_size=args.batch_size
+                                                      , shuffle=True
+                                                      , negative_rate=1.0)
     batch_generator.get_section_embs(train_df)
     batch_generator.get_section_embs(valid_df)
 

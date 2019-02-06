@@ -73,6 +73,90 @@ class BatchGenerator(object):
         for (_id, section), g in data.groupby(['_id', 'h2']):
             self.section_embs_dict[_id + section] = torch.stack(g.sentence_emb.tolist())
 
+
+class BatchGeneratorWithUnderSampling(BatchGenerator):
+    def __init__(self, tag_to_ix, batch_size=32, shuffle=True, negative_rate=1.0):
+        self.section_embs_dict = {}
+        self.vocab_tag = tag_to_ix
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.negative_rate = negative_rate
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    def generator(self, sentences, sentembs_hash, tag_seq):
+        data_size = len(sentences)
+        if self.shuffle:
+            shuffle_indices = np.random.permutation(np.arange(data_size))
+            _sentences = np.array(sentences)[shuffle_indices]
+            _sentembs_hash = np.array(sentembs_hash)[shuffle_indices]
+            _tag_seq = np.array(tag_seq)[shuffle_indices]
+        else:
+            _sentences = np.array(sentences)
+            _sentembs_hash = np.array(sentembs_hash)
+            _tag_seq = np.array(tag_seq)
+
+        ids_isin_BI_tag, ids_all_other_tag = self._get_ids(_tag_seq)
+        positive_size = len(ids_isin_BI_tag)
+        num_batches = np.ceil(positive_size * (1 + self.negative_rate) / self.batch_size).astype(np.int)
+        positive_batch_size = np.ceil(positive_size / num_batches).astype(np.int)
+        for batch_num in range(num_batches):
+            positive_batch = \
+            self._get_positive_batch((_sentences[ids_isin_BI_tag], _sentembs_hash[ids_isin_BI_tag], _tag_seq[ids_isin_BI_tag])
+                                     , positive_batch_size
+                                     , batch_num)
+
+            negative_batch = \
+            self._get_negative_batch((_sentences[ids_all_other_tag], _sentembs_hash[ids_all_other_tag], _tag_seq[ids_all_other_tag])
+                                     , self.batch_size - positive_batch_size)
+
+            batch_sentences, batch_sentembs_hash, batch_tag_seq = self._shuffle_batch(positive_batch, negative_batch)
+            
+            sentence_inputs = torch.tensor(pad_sequences(batch_sentences, padding='post')).long()
+            sentemb_inputs = self.pad_sentembs([self.section_embs_dict[_hash] for _hash in batch_sentembs_hash])
+            outputs = torch.tensor(pad_sequences(batch_tag_seq, padding='post')).long()
+
+            yield sentence_inputs.to(self.device), sentemb_inputs.to(self.device), outputs.to(self.device)
+    
+    def _shuffle_batch(self, batch1, batch2):
+        cat_batch = [np.append(data1, data2)for data1, data2 in zip(batch1, batch2)]
+        sentences, sentembs_hash, tag_seq = cat_batch[0], cat_batch[1], cat_batch[2]
+        shuffle_ids = np.random.permutation(range(len(sentences)))
+        return sentences[shuffle_ids], sentembs_hash[shuffle_ids], tag_seq[shuffle_ids]
+        
+    def _get_negative_batch(self, selected_data, sample_size):
+        """
+        Args:
+            selected_data: data of all other-tag
+            sample_size: sample size of negative batch
+        """
+        sentences, sentembs_hash, tag_seq = selected_data
+        ids = list(range(len(sentences)))
+        sample_ids = np.random.choice(ids, size=sample_size, replace=False)
+        return sentences[sample_ids], sentembs_hash[sample_ids], tag_seq[sample_ids]
+
+    def _get_positive_batch(self, selected_data, sample_size, batch_num):
+        """
+        Args:
+            selected_data: data including B or I tag
+            sample_size: sample size of positive batch
+            batch_num: current mini-batch number
+        """
+        sentences, sentembs_hash, tag_seq = selected_data
+
+        start_index = batch_num * sample_size
+        end_index = min((batch_num + 1) * sample_size, len(sentences))
+
+        return sentences[start_index:end_index], sentembs_hash[start_index:end_index], tag_seq[start_index:end_index]
+
+    def _get_ids(self, tag_seq):
+        ids = list(range(len(tag_seq)))
+        ids_isin_BI_tag = [i for i, tags in enumerate(tag_seq) \
+                            if (self.vocab_tag['B'] in tags) or (self.vocab_tag['I'] in tags)]
+        ids_all_other_tag = list(set(ids) - set(ids_isin_BI_tag))
+
+        return ids_isin_BI_tag, ids_all_other_tag
+
+
 class Tokenizer(object):
     def __init__(self):
         self.PAD = '<PAD>'
