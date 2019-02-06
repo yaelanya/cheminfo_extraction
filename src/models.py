@@ -25,8 +25,8 @@ class BiLM(nn.Module):
         
         # shape: (batch_size * timesteps, lstm_units)
         forward_mask, backward_mask = self._get_mask(inputs)
-        forward_output = forward_output.masked_select(forward_mask).view(-1, self.lstm_units)
-        backword_output = backword_output.masked_select(backward_mask).view(-1, self.lstm_units)
+        forward_output = forward_output.masked_select(forward_mask.unsqueeze(-1)).view(-1, self.lstm_units)
+        backword_output = backword_output.masked_select(backward_mask.unsqueeze(-1)).view(-1, self.lstm_units)
 
         # shape: (batch_size * timesteps, vocab_size)
         forward_output = nn.functional.log_softmax(self.linear(forward_output), dim=-1)
