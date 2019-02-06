@@ -7,7 +7,7 @@ import tensorboardX as tbx
 from time import time
 
 from models import BiLM, Att_BiLSTM_CRF
-from utils import EarlyStopping, Tokenizerm, BatchGeneratorWithUnderSampling
+from utils import EarlyStopping, Tokenizer, BatchGeneratorWithUnderSampling
 
 
 def main(args):
