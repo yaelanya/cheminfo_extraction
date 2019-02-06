@@ -3,14 +3,6 @@ import torch
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 
 
-def attach_BOS_EOS(sentences):
-    _sents = sentences.copy()
-    for s in _sents:
-        s.insert(0, '<BOS>')
-        s.append('<EOS>')
-    
-    return _sents
-
 class EarlyStopping(object):
     def __init__(self, patience=5):
         self.best_loss_score = np.Inf
