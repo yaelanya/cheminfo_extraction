@@ -4,7 +4,7 @@ import torch.nn as nn
 class BiLM(nn.Module):
     def __init__(self, embedding_dim, lstm_units, vocab_size):
         super(BiLM, self).__init__()
-
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.embedding_dim = embedding_dim
         self.lstm_units = lstm_units
         self.vocab_size = vocab_size
@@ -48,7 +48,10 @@ class BiLM(nn.Module):
         forward_loss = torch.nn.functional.nll_loss(forward_output, targets, reduction='sum')
         backward_loss = torch.nn.functional.nll_loss(backward_output, targets, reduction='sum')
 
-        average_loss = 0.5 * (forward_loss + backward_loss) / num_targets
+        if num_targets > 0:
+            average_loss = 0.5 * (forward_loss + backward_loss) / num_targets
+        else:
+            average_loss = torch.tensor(0.0).to(self.device)
 
         return average_loss
     
