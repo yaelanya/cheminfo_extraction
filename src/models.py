@@ -102,13 +102,9 @@ class Attention(nn.Module):
 
         return combination, g
 
-
-class Att_BiLSTM_CRF(nn.Module):
-    """
-    reference: https://pytorch.org/tutorials/beginner/nlp/advanced_tutorial.html
-    """
-    def __init__(self, vocab_size, tag_to_ix, embedding_dim, lstm1_units, lstm2_units, dropout=0.5):
-        super(Att_BiLSTM_CRF, self).__init__()
+class CRF(nn.Module):
+    def __init__(self, tag_to_ix):
+        super(CRF, self).__init__()
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -116,20 +112,8 @@ class Att_BiLSTM_CRF(nn.Module):
         self.START_TAG = "<START>"
         self.STOP_TAG = "<STOP>"
 
-        self.embedding_dim = embedding_dim
-        self.lstm1_units = lstm1_units
-        self.lstm2_units = lstm2_units
-        self.vocab_size = vocab_size
         self.tag_to_ix = tag_to_ix
         self.tagset_size = len(tag_to_ix)
-
-        self.word_embeds = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
-        self.dropout = nn.Dropout(p=dropout)
-        self.lstm_1 = nn.LSTM(embedding_dim, lstm1_units, num_layers=1, bidirectional=True)
-        self.att = Attention(2*lstm1_units)
-        self.lstm_2 = nn.LSTM(2*2*lstm1_units, lstm2_units, num_layers=1, bidirectional=True)
-        # Maps the output of the LSTM into tag space.
-        self.hidden2tag = nn.Linear(2*lstm2_units, self.tagset_size)
 
         # Matrix of transition parameters.  Entry i,j is the score of
         # transitioning *to* i *from* j.
@@ -140,43 +124,24 @@ class Att_BiLSTM_CRF(nn.Module):
         self.transitions.data[tag_to_ix[self.START_TAG], :] = -10000
         self.transitions.data[:, tag_to_ix[self.STOP_TAG]] = -10000
 
-    def forward(self, inputs, sent_embs):
+    def forward(self, feats):
         """
         Args:
-            inputs: (batch_size, seq_len)
-            sent_feats: (batch_size, num_sentence, embedding_dim)
+            feats: (seq_len, tagset_size)
+        Outputs:
+            output: (seq_len)
+                - output is predicted tag sequence
         """
-        lstm_feats = self._get_lstm_features(inputs, sent_embs)
-        tag_seq_batch = []
-        for feats in lstm_feats:
-            _, tag_seq = self._viterbi_decode(feats)
-            tag_seq_batch.append(tag_seq)
+        return self._viterbi_decode(feats)
 
-        return torch.tensor(tag_seq_batch).to(self.device.type)  # (batch_size, seq_len)
-
-    def _get_lstm_features(self, inputs, sent_embs):
-        batch_size = inputs.size(0)
-
-        embeds = self.word_embeds(inputs) # (batch_size, seq_len, embedding_dim)
-        embeds = embeds.transpose(0, 1) # (seq_len, batch_size, embedding_dim)
-        lstm1_out, _ = self.lstm_1(self.dropout(embeds)) # (seq_len, batch_size, 2*lstm1_units)
-        lstm1_out = lstm1_out.transpose(0, 1) # (batch_size, seq_len, 2*lstm1_units)
-        if sent_embs is not None:
-            attention_out, _ = self.att(lstm1_out, sent_embs) # (batch_size, seq_len, 2*2*lstm1_units)
-        else:
-            attention_out, _ = self.att(lstm1_out, lstm1_out)
-
-        attention_out = attention_out.transpose(1, 0) # (seq_len, batch_size, 2*2*lstm1_units)
-        lstm2_out, _ = self.lstm_2(attention_out) # (seq_len, batch_size, 2*lstm2_units)
-        lstm2_out = lstm2_out.transpose(1, 0) # (batch_size, seq_len, 2*lstm2_units)
-        
-        lstm2_out = lstm2_out.contiguous()
-        lstm2_out = lstm2_out.view(-1, 2*self.lstm2_units) # (batch_size*seq_len, 2*lstm2_units)
-        lstm_feats = self.hidden2tag(lstm2_out) # (batch_size*seq_len, tagset_size)
-
-        return lstm_feats.view(batch_size, -1, self.tagset_size) # (batch_size, seq_len, tagset_size)
-
-    def _forward_alg(self, feats, tags):
+    def forward_alg(self, feats, tags):
+        """
+        Args:
+            feats: (batch_size, seq_len, tagset_size)
+            tags: (batch_size, seq_len)
+        Outputs:
+            forward_score: (batch_size)
+        """
         batch_size = feats.size(0)
 
         alpha = torch.full((batch_size, self.tagset_size), -10000.).to(self.device.type)
@@ -198,12 +163,13 @@ class Att_BiLSTM_CRF(nn.Module):
 
         return self._log_sum_exp(terminal_var, dim=-1)
 
-    def _score_sentence(self, feats, tags):
-        transition_score = self._transition_score(tags)
-        lstm_score = self._lstm_score(feats, tags)
-        return transition_score + lstm_score
-
-    def _transition_score(self, tags):
+    def transition_score(self, tags):
+        """
+        Args:
+            tags: (batch_size, seq_len)
+        Outputs:
+            transition_score: (batch_size)
+        """
         batch_size, seq_len = tags.size()
     
         tags_t = torch.full((batch_size, seq_len + 2), self.tag_to_ix[self.STOP_TAG], dtype=torch.long).to(self.device.type)
@@ -225,16 +191,15 @@ class Att_BiLSTM_CRF(nn.Module):
         score = score * mask
 
         return score.squeeze(-1).sum(-1)
-    
-    def _lstm_score(self, feats, tags):
-        mask = (tags != self.tag_to_ix[self.PAD_TAG]).float()
-        tags = tags.unsqueeze(-1)
-        score = torch.gather(feats, 2, tags).squeeze(-1)
-        score = mask * score
-
-        return score.sum(-1)
 
     def _viterbi_decode(self, feats):
+        """
+        Args:
+            inputs: (seq_len, tagset_size)
+        Outputs:
+            output: (seq_len)
+                - output is predicted tag sequence
+        """
         backpointers = []
 
         # Initialize the viterbi variables in log space
@@ -290,14 +255,99 @@ class Att_BiLSTM_CRF(nn.Module):
 
 
 
+class Att_BiLSTM_CRF(nn.Module):
+    """
+    reference: https://pytorch.org/tutorials/beginner/nlp/advanced_tutorial.html
+    """
+    def __init__(self, vocab_size, tag_to_ix, embedding_dim, lstm1_units, lstm2_units, dropout=0.5):
+        super(Att_BiLSTM_CRF, self).__init__()
+
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+        self.PAD_TAG = "<PAD>"
+
+        self.embedding_dim = embedding_dim
+        self.lstm1_units = lstm1_units
+        self.lstm2_units = lstm2_units
+        self.vocab_size = vocab_size
+        self.tag_to_ix = tag_to_ix
+        self.tagset_size = len(tag_to_ix)
+
+        self.word_embeds = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
+        self.dropout = nn.Dropout(p=dropout)
+        self.lstm_1 = nn.LSTM(embedding_dim, lstm1_units, num_layers=1, bidirectional=True)
+        self.att = Attention(2*lstm1_units)
+        self.lstm_2 = nn.LSTM(2*2*lstm1_units, lstm2_units, num_layers=1, bidirectional=True)
+        self.hidden2tag = nn.Linear(2*lstm2_units, self.tagset_size)
+        self.crf = CRF(tag_to_ix)
+
+    def forward(self, inputs, sent_embs):
+        """
+        Args:
+            inputs: (batch_size, seq_len)
+            sent_feats: (batch_size, num_sentence, embedding_dim)
+        Outputs:
+            output: (batch_size, seq_len)
+                - output is predicted tag sequence
+        """
+        lstm_feats = self._get_lstm_features(inputs, sent_embs)
+        tag_seq_batch = []
+        for feats in lstm_feats:
+            _, tag_seq = self.crf(feats)
+            tag_seq_batch.append(tag_seq)
+
+        return torch.tensor(tag_seq_batch).to(self.device.type)  # (batch_size, seq_len)
+
+    def _get_lstm_features(self, inputs, sent_embs):
+        """
+        Args:
+            inputs: (batch_size, seq_len)
+            sent_embs: (batch_size, num_sentence, sentence_embedding_dim)
+        """
+        batch_size = inputs.size(0)
+
+        embeds = self.word_embeds(inputs) # (batch_size, seq_len, embedding_dim)
+        embeds = embeds.transpose(0, 1) # (seq_len, batch_size, embedding_dim)
+        lstm1_out, _ = self.lstm_1(self.dropout(embeds)) # (seq_len, batch_size, 2*lstm1_units)
+        lstm1_out = lstm1_out.transpose(0, 1) # (batch_size, seq_len, 2*lstm1_units)
+        if sent_embs is not None:
+            attention_out, _ = self.att(lstm1_out, sent_embs) # (batch_size, seq_len, 2*2*lstm1_units)
+        else:
+            attention_out, _ = self.att(lstm1_out, lstm1_out)
+
+        attention_out = attention_out.transpose(1, 0) # (seq_len, batch_size, 2*2*lstm1_units)
+        lstm2_out, _ = self.lstm_2(attention_out) # (seq_len, batch_size, 2*lstm2_units)
+        lstm2_out = lstm2_out.transpose(1, 0) # (batch_size, seq_len, 2*lstm2_units)
+        
+        lstm2_out = lstm2_out.contiguous()
+        lstm2_out = lstm2_out.view(-1, 2*self.lstm2_units) # (batch_size*seq_len, 2*lstm2_units)
+        lstm_feats = self.hidden2tag(lstm2_out) # (batch_size*seq_len, tagset_size)
+
+        return lstm_feats.view(batch_size, -1, self.tagset_size) # (batch_size, seq_len, tagset_size)
+
+    def _score_sentence(self, feats, tags):
+        transition_score = self.crf.transition_score(tags)
+        lstm_score = self._lstm_score(feats, tags)
+        return transition_score + lstm_score
+    
+    def _lstm_score(self, feats, tags):
+        mask = (tags != self.tag_to_ix[self.PAD_TAG]).float()
+        tags = tags.unsqueeze(-1)
+        score = torch.gather(feats, 2, tags).squeeze(-1)
+        score = mask * score
+
+        return score.sum(-1)
+
     def neg_log_likelihood(self, inputs, sent_embs, targets):
         """
         Args:
             inputs: (batch_size, seq_len)
             targets: (batch_size, seq_len)
             ignore_index: int
+        Outputs:
+            loss: Negative log likelihood loss
         """
         feats = self._get_lstm_features(inputs, sent_embs)
-        losses =  self._forward_alg(feats, targets) - self._score_sentence(feats, targets)
+        losses =  self.crf.forward_alg(feats, targets) - self._score_sentence(feats, targets)
 
         return losses.mean()
