@@ -1,6 +1,7 @@
 /data/
 /model/
 /runs/
+/result/
 /src/runs/
 __pycache__/
 */.ipynb_checkpoints/

@@ -7,7 +7,7 @@ import tensorboardX as tbx
 from time import time
 
 from models import BiLM, Att_BiLSTM_CRF
-from utils import EarlyStopping, Tokenizer, BatchGeneratorWithUnderSampling
+from utils import EarlyStopping, Tokenizer, BatchGeneratorWithUnderSampling, BatchGenerator
 
 
 def main(args):
@@ -45,10 +45,14 @@ def main(args):
     valid_sentences, valid_sentembs_hash, valid_tag_seq = get_data(valid_df, args.target_col, tokenizer)
     
     # create mini-batch generator
-    batch_generator = BatchGeneratorWithUnderSampling(tokenizer.vocab_tag
-                                                      , batch_size=args.batch_size
-                                                      , shuffle=True
-                                                      , negative_rate=1.0)
+    if args.under_sampling:
+        batch_generator = BatchGeneratorWithUnderSampling(tokenizer.vocab_tag
+                                                          , batch_size=args.batch_size
+                                                          , shuffle=True
+                                                          , negative_rate=args.under_sampling)
+    else:
+        batch_generator = BatchGenerator(batch_size=args.batch_size, shuffle=True)
+
     batch_generator.get_section_embs(train_df)
     batch_generator.get_section_embs(valid_df)
 
@@ -67,7 +71,7 @@ def main(args):
     print("Save model")
     torch.save(model.state_dict(), args.output)
 
-def train(model, train_data, valid_data, epochs, batch_generator, early_stopping):
+def train(model, train_data, valid_data, epochs, batch_generator, early_stopping=None):
     writer = tbx.SummaryWriter()
 
     train_sentences, train_sentembs_hash, train_tag_seq = train_data
@@ -75,7 +79,7 @@ def train(model, train_data, valid_data, epochs, batch_generator, early_stopping
     optimizer = torch.optim.Adam(model.parameters())
 
     for epoch in range(epochs):
-        start = time()
+        epoch_time = time()
 
         # training phase
         model.train()
@@ -106,13 +110,13 @@ def train(model, train_data, valid_data, epochs, batch_generator, early_stopping
             
             valid_losses.append(loss.item())
 
-        end = time()
+        epoch_time = time() - epoch_time
 
         train_loss = np.mean(train_losses)
         valid_loss = np.mean(valid_losses)
         writer.add_scalar('train_loss', train_loss, global_step=(epoch + 1))
         writer.add_scalar('valid_loss', valid_loss, global_step=(epoch + 1))
-        print("Epoch {0} \t train loss: {1} \t valid loss: {2} \t exec time: {3}s".format((epoch + 1), train_loss, valid_loss, end - start))
+        print("Epoch {0} \t train loss: {1} \t valid loss: {2} \t exec time: {3}s".format((epoch + 1), train_loss, valid_loss, epoch_time))
 
         if early_stopping is not None:
             early_stopping(model, valid_loss)
@@ -169,6 +173,7 @@ if __name__ == "__main__":
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--early_stopping', default=None, type=int)
     parser.add_argument('--batch_size', default=32, type=int)
+    parser.add_argument('--under_sampling', default=None, type=int)
     parser.add_argument('--word_emb_size', default=100, type=int)
     parser.add_argument('--lstm1_units', default=100, type=int)
     parser.add_argument('--lstm2_units', default=200, type=int)
