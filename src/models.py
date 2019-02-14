@@ -316,14 +316,29 @@ class BiLSTM_CRF(nn.Module):
             output: (batch_size, seq_len, tagset_size)
         """
         batch_size = word_inputs.size(0)
+
+        lens = (word_inputs > 0).sum(-1)
+        sorted_lens, sorted_indices = lens.sort(descending=True)
+        _, origin_indices = sorted_indices.sort(0)
         
+        # Character embeddings
         char_embs = self._get_char_feats(char_inputs) # (batch_size, seq_len, 2*char_embedding_dim)
-        char_embs = char_embs.transpose(1, 0) # # (seq_len, batch_size, 2*char_embedding_dim)
+        char_embs = char_embs.transpose(1, 0) # (seq_len, batch_size, 2*char_embedding_dim)
+        
+        # Word embeddings
         word_embs = self.word_embeds(word_inputs) # (batch_size, seq_len, word_embedding_dim)
         word_embs = word_embs.transpose(1, 0) # (seq_len, batch_size, word_embedding_dim)
+
         embeds = torch.cat((word_embs, char_embs), dim=-1)
         
-        lstm_out, _ = self.word_lstm(self.dropout(embeds)) # (seq_len, batch_size, 2*lstm_units)
+        embeds = self.dropout(embeds)
+
+        embeds = embeds[sorted_indices]
+        packed = pack_padded_sequence(embeds, sorted_lens)
+        packed_lstm_out, _ = self.word_lstm(packed)
+        lstm_out = pad_packed_sequence(packed_lstm_out) # (seq_len, batch_size, 2*word_lstm_units)
+        lstm_out = lstm_out[origin_indices]
+
         lstm_out = lstm_out.transpose(1, 0)
         lstm_out = lstm_out.contiguous()
         lstm_out = lstm_out.view(-1, 2*self.word_lstm_units) # (batch_size*seq_len, 2*lstm_units)
