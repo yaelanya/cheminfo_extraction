@@ -317,32 +317,23 @@ class BiLSTM_CRF(nn.Module):
         """
         batch_size = word_inputs.size(0)
         
-        # Character embeddings
-        char_embs = self._get_char_feats(char_inputs) # (batch_size, seq_len, 2*char_embedding_dim)
-        char_embs = char_embs.transpose(1, 0) # (seq_len, batch_size, 2*char_embedding_dim)
-        
-        # Word embeddings
+        char_embs = self._get_char_feats(char_inputs) # (batch_size, seq_len, 2*char_lstm_units)
         word_embs = self.word_embeds(word_inputs) # (batch_size, seq_len, word_embedding_dim)
-        word_embs = word_embs.transpose(1, 0) # (seq_len, batch_size, word_embedding_dim)
-
         embeds = torch.cat((word_embs, char_embs), dim=-1)
-        
         embeds = self.dropout(embeds)
 
         # masking for LSTM ang get LSTM feats
-        lens = (word_inputs > 0).sum(-1)
+        lens = (word_inputs > self.tag_to_ix[self.PAD_TAG]).sum(-1)
         sorted_lens, sorted_indices = lens.sort(descending=True)
         _, origin_indices = sorted_indices.sort()
         embeds = embeds[sorted_indices]
-        packed = pack_padded_sequence(embeds, sorted_lens)
+        packed = pack_padded_sequence(embeds, sorted_lens, batch_first=True)
         packed_lstm_out, _ = self.word_lstm(packed)
-        lstm_out = pad_packed_sequence(packed_lstm_out) # (seq_len, batch_size, 2*word_lstm_units)
+        lstm_out, _ = pad_packed_sequence(packed_lstm_out, batch_first=True) # (batch_size, seq_len, 2*word_lstm_units)
         lstm_out = lstm_out[origin_indices]
 
-        lstm_out = lstm_out.transpose(1, 0)
-        lstm_out = lstm_out.contiguous()
         lstm_out = lstm_out.view(-1, 2*self.word_lstm_units) # (batch_size*seq_len, 2*lstm_units)
-        
+
         lstm_feats = self.fc(lstm_out)
         lstm_feats = self.hidden2tag(lstm_feats) # (batch_size*seq_len, tagset_size)
 
@@ -360,9 +351,9 @@ class BiLSTM_CRF(nn.Module):
         char_inputs = char_inputs.view(-1, word_len) # (batch_size*seq_len, word_len)
         char_embs = self.char_embeds(char_inputs)
 
-        lens = (char_inputs > 0).sum(-1)
+        lens = (char_inputs > self.tag_to_ix[self.PAD_TAG]).sum(-1)
         sorted_lens, sorted_indices = lens.sort(descending=True)
-        _, origin_indices = sorted_indices.sort(0)
+        _, origin_indices = sorted_indices.sort()
         char_embs = char_embs[sorted_indices]
         packed = pack_padded_sequence(char_embs[sorted_lens > 0], sorted_lens[sorted_lens > 0], batch_first=True)
         _, (h_n, _) = self.char_lstm(packed)
@@ -498,6 +489,6 @@ class Att_BiLSTM_CRF(nn.Module):
             loss: Negative log likelihood loss
         """
         feats = self._get_lstm_features(inputs, sent_embs)
-        losses =  self.crf.forward_alg(feats, targets) - self._score_sentence(feats, targets)
+        losses = self.crf.forward_alg(feats, targets) - self._score_sentence(feats, targets)
 
         return losses.mean()
