@@ -316,10 +316,6 @@ class BiLSTM_CRF(nn.Module):
             output: (batch_size, seq_len, tagset_size)
         """
         batch_size = word_inputs.size(0)
-
-        lens = (word_inputs > 0).sum(-1)
-        sorted_lens, sorted_indices = lens.sort(descending=True)
-        _, origin_indices = sorted_indices.sort(0)
         
         # Character embeddings
         char_embs = self._get_char_feats(char_inputs) # (batch_size, seq_len, 2*char_embedding_dim)
@@ -333,6 +329,10 @@ class BiLSTM_CRF(nn.Module):
         
         embeds = self.dropout(embeds)
 
+        # masking for LSTM ang get LSTM feats
+        lens = (word_inputs > 0).sum(-1)
+        sorted_lens, sorted_indices = lens.sort(descending=True)
+        _, origin_indices = sorted_indices.sort()
         embeds = embeds[sorted_indices]
         packed = pack_padded_sequence(embeds, sorted_lens)
         packed_lstm_out, _ = self.word_lstm(packed)
@@ -358,17 +358,16 @@ class BiLSTM_CRF(nn.Module):
         batch_size, seq_len, word_len = char_inputs.size()
 
         char_inputs = char_inputs.view(-1, word_len) # (batch_size*seq_len, word_len)
+        char_embs = self.char_embeds(char_inputs)
 
         lens = (char_inputs > 0).sum(-1)
         sorted_lens, sorted_indices = lens.sort(descending=True)
         _, origin_indices = sorted_indices.sort(0)
-
-        char_embs = self.char_embeds(char_inputs[sorted_indices])
+        char_embs = char_embs[sorted_indices]
         packed = pack_padded_sequence(char_embs[sorted_lens > 0], sorted_lens[sorted_lens > 0], batch_first=True)
         _, (h_n, _) = self.char_lstm(packed)
 
-        forward_last_state, backward_last_state = h_n[0], h_n[1]
-        char_feats = torch.cat((forward_last_state, backward_last_state), dim=-1)
+        char_feats = torch.cat((h_n[0], h_n[1]), dim=-1)
 
         count_pad_word = (sorted_lens == 0).sum()
         pad_word = torch.zeros((count_pad_word, 2*self.char_lstm_units)).to(self.device)
