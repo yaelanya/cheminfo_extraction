@@ -28,7 +28,7 @@ class BiLM(nn.Module):
         embs = embs[sorted_indices]
         packed = pack_padded_sequence(embs, sorted_lens, batch_first=True)
         output, (h_n, c_n) = self.bi_lstm(packed)
-        output, _ = pad_packed_sequence(output, batch_first=True) 
+        output, _ = pad_packed_sequence(output, batch_first=True)
         output, h_n, c_n = output[origin_indices], h_n[:, origin_indices], c_n[:, origin_indices]
 
         forward_output, backword_output = output[:, :, :self.lstm_units], output[:, :, self.lstm_units:]
@@ -44,7 +44,7 @@ class BiLM(nn.Module):
         
         loss = self._softmax_loss(forward_output, backword_output, inputs)
 
-        return loss, h, c
+        return loss, h_n, c_n
 
     def _softmax_loss(self, forward_output, backward_output, targets):
         # target shape: (batch_size * timesteps,)
