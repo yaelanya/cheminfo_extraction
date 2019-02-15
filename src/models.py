@@ -320,7 +320,6 @@ class BiLSTM_CRF(nn.Module):
         Outputs:
             output: (batch_size, seq_len, tagset_size)
         """
-<<<<<<< HEAD
         word_inputs, char_inputs = inputs[0], inputs[1]
 
         batch_size = word_inputs.size(0)
@@ -340,19 +339,6 @@ class BiLSTM_CRF(nn.Module):
         lstm_out, _ = pad_packed_sequence(packed_lstm_out, batch_first=True) # (batch_size, seq_len, 2*word_lstm_units)
         lstm_out = lstm_out[origin_indices]
 
-=======
-        batch_size = word_inputs.size(0)
-        
-        char_embs = self._get_char_feats(char_inputs) # (batch_size, seq_len, 2*char_embedding_dim)
-        char_embs = char_embs.transpose(1, 0) # # (seq_len, batch_size, 2*char_embedding_dim)
-        word_embs = self.word_embeds(word_inputs) # (batch_size, seq_len, word_embedding_dim)
-        word_embs = word_embs.transpose(1, 0) # (seq_len, batch_size, word_embedding_dim)
-        embeds = torch.cat((word_embs, char_embs), dim=-1)
-        
-        lstm_out, _ = self.word_lstm(self.dropout(embeds)) # (seq_len, batch_size, 2*lstm_units)
-        lstm_out = lstm_out.transpose(1, 0)
-        lstm_out = lstm_out.contiguous()
->>>>>>> parent of 8dc200f... add masking for word-level LSTM
         lstm_out = lstm_out.view(-1, 2*self.word_lstm_units) # (batch_size*seq_len, 2*lstm_units)
 
         lstm_feats = self.fc(lstm_out)
