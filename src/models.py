@@ -27,10 +27,10 @@ class BiLM(nn.Module):
         embs = self.embedding(inputs)
         embs = embs[sorted_indices]
         packed = pack_padded_sequence(embs, sorted_lens, batch_first=True)
-        output, (h, c) = self.bi_lstm(packed)
+        output, (h_n, c_n) = self.bi_lstm(packed)
         output, _ = pad_packed_sequence(output, batch_first=True) 
-        output = output[origin_indices]
-        
+        output, h_n, c_n = output[origin_indices], h_n[:, origin_indices], c_n[:, origin_indices]
+
         forward_output, backword_output = output[:, :, :self.lstm_units], output[:, :, self.lstm_units:]
         
         # shape: (batch_size * timesteps, lstm_units)
