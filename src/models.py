@@ -255,6 +255,9 @@ class CRF(nn.Module):
         return idx.item()
 
 class BiLSTM_CRF(nn.Module):
+    """
+    reference: https://pytorch.org/tutorials/beginner/nlp/advanced_tutorial.html
+    """
     def __init__(self
                  , tag_to_ix
                  , word_vocab_size
@@ -394,10 +397,7 @@ class BiLSTM_CRF(nn.Module):
 
         return losses.mean()
 
-class Att_BiLSTM_CRF(nn.Module):
-    """
-    reference: https://pytorch.org/tutorials/beginner/nlp/advanced_tutorial.html
-    """
+class Att_BiLSTM_CRF(BiLSTM_CRF):
     def __init__(self, vocab_size, tag_to_ix, embedding_dim, lstm1_units, lstm2_units, dropout=0.5):
         super(Att_BiLSTM_CRF, self).__init__()
 
@@ -419,23 +419,6 @@ class Att_BiLSTM_CRF(nn.Module):
         self.lstm_2 = nn.LSTM(2*2*lstm1_units, lstm2_units, num_layers=1, bidirectional=True)
         self.hidden2tag = nn.Linear(2*lstm2_units, self.tagset_size)
         self.crf = CRF(tag_to_ix)
-
-    def forward(self, inputs, sent_embs):
-        """
-        Args:
-            inputs: (batch_size, seq_len)
-            sent_feats: (batch_size, num_sentence, embedding_dim)
-        Outputs:
-            output: (batch_size, seq_len)
-                - output is predicted tag sequence
-        """
-        lstm_feats = self._get_lstm_features(inputs, sent_embs)
-        tag_seq_batch = []
-        for feats in lstm_feats:
-            _, tag_seq = self.crf(feats)
-            tag_seq_batch.append(tag_seq)
-
-        return torch.tensor(tag_seq_batch).to(self.device.type)  # (batch_size, seq_len)
 
     def _get_lstm_features(self, inputs, sent_embs):
         """
@@ -465,30 +448,3 @@ class Att_BiLSTM_CRF(nn.Module):
         lstm_feats = self.hidden2tag(lstm2_out) # (batch_size*seq_len, tagset_size)
 
         return lstm_feats.view(batch_size, -1, self.tagset_size) # (batch_size, seq_len, tagset_size)
-
-    def _score_sentence(self, feats, tags):
-        transition_score = self.crf.transition_score(tags)
-        lstm_score = self._lstm_score(feats, tags)
-        return transition_score + lstm_score
-    
-    def _lstm_score(self, feats, tags):
-        mask = (tags != self.tag_to_ix[self.PAD_TAG]).float()
-        tags = tags.unsqueeze(-1)
-        score = torch.gather(feats, 2, tags).squeeze(-1)
-        score = mask * score
-
-        return score.sum(-1)
-
-    def neg_log_likelihood(self, inputs, sent_embs, targets):
-        """
-        Args:
-            inputs: (batch_size, seq_len)
-            targets: (batch_size, seq_len)
-            ignore_index: int
-        Outputs:
-            loss: Negative log likelihood loss
-        """
-        feats = self._get_lstm_features(inputs, sent_embs)
-        losses = self.crf.forward_alg(feats, targets) - self._score_sentence(feats, targets)
-
-        return losses.mean()
