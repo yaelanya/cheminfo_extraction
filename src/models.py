@@ -255,6 +255,9 @@ class CRF(nn.Module):
         return idx.item()
 
 class BiLSTM_CRF(nn.Module):
+    """
+    reference: https://pytorch.org/tutorials/beginner/nlp/advanced_tutorial.html
+    """
     def __init__(self
                  , tag_to_ix
                  , word_vocab_size
@@ -290,16 +293,8 @@ class BiLSTM_CRF(nn.Module):
         self.hidden2tag = nn.Linear(fc_dim, self.tagset_size)
         self.crf = CRF(tag_to_ix)
 
-    def forward(self, word_inputs, char_inputs):
-        """
-        Args:
-            word_inputs: (batch_size, seq_len)
-            char_inputs: (batch_size, seq_len, word_len)
-        Outputs:
-            output: (batch_size, seq_len)
-                - output is predicted tag sequence
-        """
-        lstm_feats = self._get_lstm_features(word_inputs, char_inputs)
+    def forward(self, inputs):
+        lstm_feats = self._get_lstm_features(inputs)
         tag_seq_batch = []
         for feats in lstm_feats:
             _, tag_seq = self.crf(feats)
@@ -307,14 +302,17 @@ class BiLSTM_CRF(nn.Module):
 
         return torch.tensor(tag_seq_batch).to(self.device.type)  # (batch_size, seq_len)
 
-    def _get_lstm_features(self, word_inputs, char_inputs):
+    def _get_lstm_features(self, inputs):
         """
         Args:
-            word_inputs: (batch_size, seq_len)
-            char_inputs: (batch_size, seq_len, word_len)
+            inputs: (word_inputs, char_inputs)
+            - word_inputs: (batch_size, seq_len)
+            - char_inputs: (batch_size, seq_len, word_len)
         Outputs:
             output: (batch_size, seq_len, tagset_size)
         """
+        word_inputs, char_inputs = inputs[0], inputs[1]
+
         batch_size = word_inputs.size(0)
         
         char_embs = self._get_char_feats(char_inputs) # (batch_size, seq_len, 2*char_lstm_units)
@@ -380,7 +378,7 @@ class BiLSTM_CRF(nn.Module):
 
         return score.sum(-1)
 
-    def neg_log_likelihood(self, word_inputs, char_inputs, targets):
+    def neg_log_likelihood(self, inputs, targets):
         """
         Args:
             inputs: (batch_size, seq_len)
@@ -389,17 +387,14 @@ class BiLSTM_CRF(nn.Module):
         Outputs:
             loss: Negative log likelihood loss
         """
-        feats = self._get_lstm_features(word_inputs, char_inputs)
+        feats = self._get_lstm_features(inputs)
         losses = self.crf.forward_alg(feats, targets) - self._score_sentence(feats, targets)
 
         return losses.mean()
 
-class Att_BiLSTM_CRF(nn.Module):
-    """
-    reference: https://pytorch.org/tutorials/beginner/nlp/advanced_tutorial.html
-    """
+class Sent_Att_BiLSTM_CRF(BiLSTM_CRF):
     def __init__(self, vocab_size, tag_to_ix, embedding_dim, lstm1_units, lstm2_units, dropout=0.5):
-        super(Att_BiLSTM_CRF, self).__init__()
+        super(Sent_Att_BiLSTM_CRF, self).__init__()
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -420,75 +415,45 @@ class Att_BiLSTM_CRF(nn.Module):
         self.hidden2tag = nn.Linear(2*lstm2_units, self.tagset_size)
         self.crf = CRF(tag_to_ix)
 
-    def forward(self, inputs, sent_embs):
+    def _get_lstm_features(self, inputs):
         """
         Args:
-            inputs: (batch_size, seq_len)
-            sent_feats: (batch_size, num_sentence, embedding_dim)
-        Outputs:
-            output: (batch_size, seq_len)
-                - output is predicted tag sequence
-        """
-        lstm_feats = self._get_lstm_features(inputs, sent_embs)
-        tag_seq_batch = []
-        for feats in lstm_feats:
-            _, tag_seq = self.crf(feats)
-            tag_seq_batch.append(tag_seq)
-
-        return torch.tensor(tag_seq_batch).to(self.device.type)  # (batch_size, seq_len)
-
-    def _get_lstm_features(self, inputs, sent_embs):
-        """
-        Args:
-            inputs: (batch_size, seq_len)
-            sent_embs: (batch_size, num_sentence, sentence_embedding_dim)
+            inputs: [word_inputs, sent_embs]
+            - word_inputs: (batch_size, seq_len)
+            - sent_embs: (batch_size, num_sentence, sentence_embedding_dim)
         Outputs:
             output: (batch_size, seq_len, tagset_size)
         """
+        word_inputs, sent_embs = inputs[0], inputs[1]
+
         batch_size = inputs.size(0)
 
-        embeds = self.word_embeds(inputs) # (batch_size, seq_len, embedding_dim)
-        embeds = embeds.transpose(0, 1) # (seq_len, batch_size, embedding_dim)
-        lstm1_out, _ = self.lstm_1(self.dropout(embeds)) # (seq_len, batch_size, 2*lstm1_units)
-        lstm1_out = lstm1_out.transpose(0, 1) # (batch_size, seq_len, 2*lstm1_units)
+        embeds = self.word_embeds(word_inputs) # (batch_size, seq_len, embedding_dim)
+        embeds = self.dropout(embeds)
+
+        # sort index
+        lens = (word_inputs > self.tag_to_ix[self.PAD_TAG]).sum(-1)
+        sorted_lens, sorted_indices = lens.sort(descending=True)
+        _, origin_indices = sorted_indices.sort()
+
+        embeds = embeds[sorted_indices]
+        packed = pack_padded_sequence(embeds, sorted_lens, batch_first=True)
+        lstm1_out, _ = self.lstm_1(packed)
+        lstm1_out, _ = pad_packed_sequence(lstm1_out, batch_first=True) # (batch_size, seq_len, 2*lstm1_units)
+
         if sent_embs is not None:
-            attention_out, _ = self.att(lstm1_out, sent_embs) # (batch_size, seq_len, 2*2*lstm1_units)
+            attention_out, _ = self.att(lstm1_out, sent_embs[sorted_indices]) # (batch_size, seq_len, 2*2*lstm1_units)
         else:
             attention_out, _ = self.att(lstm1_out, lstm1_out)
-
-        attention_out = attention_out.transpose(1, 0) # (seq_len, batch_size, 2*2*lstm1_units)
-        lstm2_out, _ = self.lstm_2(attention_out) # (seq_len, batch_size, 2*lstm2_units)
-        lstm2_out = lstm2_out.transpose(1, 0) # (batch_size, seq_len, 2*lstm2_units)
         
+        packed = pack_padded_sequence(attention_out, sorted_lens, batch_first=True)
+        lstm2_out, _ = self.lstm_2(packed)
+        lstm2_out, _ = pad_packed_sequence(lstm2_out, batch_first=True) # (batch_size, seq_len, 2*lstm2_units)
+
         lstm2_out = lstm2_out.contiguous()
         lstm2_out = lstm2_out.view(-1, 2*self.lstm2_units) # (batch_size*seq_len, 2*lstm2_units)
         lstm_feats = self.hidden2tag(lstm2_out) # (batch_size*seq_len, tagset_size)
+        lstm_feats = lstm_feats.view(batch_size, -1, self.tagset_size) # (batch_size, seq_len, tagset_size)
+        lstm_feats = lstm_feats[origin_indices]
 
-        return lstm_feats.view(batch_size, -1, self.tagset_size) # (batch_size, seq_len, tagset_size)
-
-    def _score_sentence(self, feats, tags):
-        transition_score = self.crf.transition_score(tags)
-        lstm_score = self._lstm_score(feats, tags)
-        return transition_score + lstm_score
-    
-    def _lstm_score(self, feats, tags):
-        mask = (tags != self.tag_to_ix[self.PAD_TAG]).float()
-        tags = tags.unsqueeze(-1)
-        score = torch.gather(feats, 2, tags).squeeze(-1)
-        score = mask * score
-
-        return score.sum(-1)
-
-    def neg_log_likelihood(self, inputs, sent_embs, targets):
-        """
-        Args:
-            inputs: (batch_size, seq_len)
-            targets: (batch_size, seq_len)
-            ignore_index: int
-        Outputs:
-            loss: Negative log likelihood loss
-        """
-        feats = self._get_lstm_features(inputs, sent_embs)
-        losses = self.crf.forward_alg(feats, targets) - self._score_sentence(feats, targets)
-
-        return losses.mean()
+        return lstm_feats
