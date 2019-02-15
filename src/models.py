@@ -3,13 +3,14 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 class BiLM(nn.Module):
-    def __init__(self, embedding_dim, lstm_units, vocab_size):
+    def __init__(self, embedding_dim, lstm_units, vocab_size, padding_idx=0):
         super(BiLM, self).__init__()
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.padding_idx = padding_idx
         self.embedding_dim = embedding_dim
         self.lstm_units = lstm_units
         self.vocab_size = vocab_size
-        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
+        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=padding_idx)
         self.bi_lstm = nn.LSTM(embedding_dim, lstm_units, num_layers=1, bidirectional=True)
         self.linear = nn.Linear(lstm_units, vocab_size)
 
@@ -18,10 +19,18 @@ class BiLM(nn.Module):
         Args:
             inputs: (batch_size, seq_len)
         """
+        # masking for LSTM ang get LSTM feats
+        lens = (inputs != self.padding_idx).sum(-1)
+        sorted_lens, sorted_indices = lens.sort(descending=True)
+        _, origin_indices = sorted_indices.sort()
+
         embs = self.embedding(inputs)
-        embs = embs.transpose(1, 0) # (seq_len, batch_size, embedding_dim)
-        output, (h, c) = self.bi_lstm(embs)
-        output = output.transpose(1, 0) # (batch_size, seq_len, 2*lstm_units)
+        embs = embs[sorted_indices]
+        packed = pack_padded_sequence(embs, sorted_lens, batch_first=True)
+        output, (h_n, c_n) = self.bi_lstm(packed)
+        output, _ = pad_packed_sequence(output, batch_first=True)
+        output, h_n, c_n = output[origin_indices], h_n[:, origin_indices], c_n[:, origin_indices]
+
         forward_output, backword_output = output[:, :, :self.lstm_units], output[:, :, self.lstm_units:]
         
         # shape: (batch_size * timesteps, lstm_units)
@@ -35,7 +44,7 @@ class BiLM(nn.Module):
         
         loss = self._softmax_loss(forward_output, backword_output, inputs)
 
-        return loss, h, c
+        return loss, h_n, c_n
 
     def _softmax_loss(self, forward_output, backward_output, targets):
         # target shape: (batch_size * timesteps,)
@@ -311,6 +320,7 @@ class BiLSTM_CRF(nn.Module):
         Outputs:
             output: (batch_size, seq_len, tagset_size)
         """
+<<<<<<< HEAD
         word_inputs, char_inputs = inputs[0], inputs[1]
 
         batch_size = word_inputs.size(0)
@@ -330,6 +340,19 @@ class BiLSTM_CRF(nn.Module):
         lstm_out, _ = pad_packed_sequence(packed_lstm_out, batch_first=True) # (batch_size, seq_len, 2*word_lstm_units)
         lstm_out = lstm_out[origin_indices]
 
+=======
+        batch_size = word_inputs.size(0)
+        
+        char_embs = self._get_char_feats(char_inputs) # (batch_size, seq_len, 2*char_embedding_dim)
+        char_embs = char_embs.transpose(1, 0) # # (seq_len, batch_size, 2*char_embedding_dim)
+        word_embs = self.word_embeds(word_inputs) # (batch_size, seq_len, word_embedding_dim)
+        word_embs = word_embs.transpose(1, 0) # (seq_len, batch_size, word_embedding_dim)
+        embeds = torch.cat((word_embs, char_embs), dim=-1)
+        
+        lstm_out, _ = self.word_lstm(self.dropout(embeds)) # (seq_len, batch_size, 2*lstm_units)
+        lstm_out = lstm_out.transpose(1, 0)
+        lstm_out = lstm_out.contiguous()
+>>>>>>> parent of 8dc200f... add masking for word-level LSTM
         lstm_out = lstm_out.view(-1, 2*self.word_lstm_units) # (batch_size*seq_len, 2*lstm_units)
 
         lstm_feats = self.fc(lstm_out)
