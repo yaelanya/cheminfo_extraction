@@ -3,13 +3,14 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 class BiLM(nn.Module):
-    def __init__(self, embedding_dim, lstm_units, vocab_size):
+    def __init__(self, embedding_dim, lstm_units, vocab_size, padding_idx=0):
         super(BiLM, self).__init__()
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.padding_idx = padding_idx
         self.embedding_dim = embedding_dim
         self.lstm_units = lstm_units
         self.vocab_size = vocab_size
-        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=0)
+        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=padding_idx)
         self.bi_lstm = nn.LSTM(embedding_dim, lstm_units, num_layers=1, bidirectional=True)
         self.linear = nn.Linear(lstm_units, vocab_size)
 
@@ -18,10 +19,18 @@ class BiLM(nn.Module):
         Args:
             inputs: (batch_size, seq_len)
         """
+        # masking for LSTM ang get LSTM feats
+        lens = (inputs != self.padding_idx).sum(-1)
+        sorted_lens, sorted_indices = lens.sort(descending=True)
+        _, origin_indices = sorted_indices.sort()
+
         embs = self.embedding(inputs)
-        embs = embs.transpose(1, 0) # (seq_len, batch_size, embedding_dim)
-        output, (h, c) = self.bi_lstm(embs)
-        output = output.transpose(1, 0) # (batch_size, seq_len, 2*lstm_units)
+        embs = embs[sorted_indices]
+        packed = pack_padded_sequence(embs, sorted_lens, batch_first=True)
+        output, (h, c) = self.bi_lstm(packed)
+        output, _ = pad_packed_sequence(output, batch_first=True) 
+        output = output[origin_indices]
+        
         forward_output, backword_output = output[:, :, :self.lstm_units], output[:, :, self.lstm_units:]
         
         # shape: (batch_size * timesteps, lstm_units)
