@@ -293,16 +293,8 @@ class BiLSTM_CRF(nn.Module):
         self.hidden2tag = nn.Linear(fc_dim, self.tagset_size)
         self.crf = CRF(tag_to_ix)
 
-    def forward(self, word_inputs, char_inputs):
-        """
-        Args:
-            word_inputs: (batch_size, seq_len)
-            char_inputs: (batch_size, seq_len, word_len)
-        Outputs:
-            output: (batch_size, seq_len)
-                - output is predicted tag sequence
-        """
-        lstm_feats = self._get_lstm_features(word_inputs, char_inputs)
+    def forward(self, inputs):
+        lstm_feats = self._get_lstm_features(inputs)
         tag_seq_batch = []
         for feats in lstm_feats:
             _, tag_seq = self.crf(feats)
@@ -310,14 +302,17 @@ class BiLSTM_CRF(nn.Module):
 
         return torch.tensor(tag_seq_batch).to(self.device.type)  # (batch_size, seq_len)
 
-    def _get_lstm_features(self, word_inputs, char_inputs):
+    def _get_lstm_features(self, inputs):
         """
         Args:
-            word_inputs: (batch_size, seq_len)
-            char_inputs: (batch_size, seq_len, word_len)
+            inputs: (word_inputs, char_inputs)
+            - word_inputs: (batch_size, seq_len)
+            - char_inputs: (batch_size, seq_len, word_len)
         Outputs:
             output: (batch_size, seq_len, tagset_size)
         """
+        word_inputs, char_inputs = inputs[0], inputs[1]
+
         batch_size = word_inputs.size(0)
         
         char_embs = self._get_char_feats(char_inputs) # (batch_size, seq_len, 2*char_lstm_units)
@@ -383,7 +378,7 @@ class BiLSTM_CRF(nn.Module):
 
         return score.sum(-1)
 
-    def neg_log_likelihood(self, word_inputs, char_inputs, targets):
+    def neg_log_likelihood(self, inputs, targets):
         """
         Args:
             inputs: (batch_size, seq_len)
@@ -392,7 +387,7 @@ class BiLSTM_CRF(nn.Module):
         Outputs:
             loss: Negative log likelihood loss
         """
-        feats = self._get_lstm_features(word_inputs, char_inputs)
+        feats = self._get_lstm_features(inputs)
         losses = self.crf.forward_alg(feats, targets) - self._score_sentence(feats, targets)
 
         return losses.mean()
@@ -420,17 +415,20 @@ class Att_BiLSTM_CRF(BiLSTM_CRF):
         self.hidden2tag = nn.Linear(2*lstm2_units, self.tagset_size)
         self.crf = CRF(tag_to_ix)
 
-    def _get_lstm_features(self, inputs, sent_embs):
+    def _get_lstm_features(self, inputs):
         """
         Args:
-            inputs: (batch_size, seq_len)
-            sent_embs: (batch_size, num_sentence, sentence_embedding_dim)
+            inputs: [word_inputs, sent_embs]
+            - word_inputs: (batch_size, seq_len)
+            - sent_embs: (batch_size, num_sentence, sentence_embedding_dim)
         Outputs:
             output: (batch_size, seq_len, tagset_size)
         """
+        word_inputs, sent_embs = inputs[0], inputs[1]
+
         batch_size = inputs.size(0)
 
-        embeds = self.word_embeds(inputs) # (batch_size, seq_len, embedding_dim)
+        embeds = self.word_embeds(word_inputs) # (batch_size, seq_len, embedding_dim)
         embeds = embeds.transpose(0, 1) # (seq_len, batch_size, embedding_dim)
         lstm1_out, _ = self.lstm_1(self.dropout(embeds)) # (seq_len, batch_size, 2*lstm1_units)
         lstm1_out = lstm1_out.transpose(0, 1) # (batch_size, seq_len, 2*lstm1_units)
