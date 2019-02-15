@@ -394,7 +394,7 @@ class BiLSTM_CRF(nn.Module):
 
 class Sent_Att_BiLSTM_CRF(BiLSTM_CRF):
     def __init__(self, vocab_size, tag_to_ix, embedding_dim, lstm1_units, lstm2_units, dropout=0.5):
-        super(Att_BiLSTM_CRF, self).__init__()
+        super(Sent_Att_BiLSTM_CRF, self).__init__()
 
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
